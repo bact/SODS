@@ -642,7 +642,12 @@ public class Sheet implements Cloneable,Comparable<Sheet> {
     Cell getCell(int row,int column){
         Row item;
         if (row == numRows-1) {
-            item = rows.get(rows.size()-1);
+            int last = rows.size()-1;
+            item = rows.get(last);
+            if (item.num_repeated > 1) {
+                splitField(rows, last, item.num_repeated - 1);
+                item = rows.get(last + 1);
+            }
         }
         else {
             item = getFieldForEditing(rows, Row::new, row);
