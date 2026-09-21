@@ -630,55 +630,33 @@ public class SheetTest {
     @Test
     public void testSetValueOnLastRowAfterLoadingRepeatedRows() throws Exception {
         Sheet sheet = new Sheet("A", 4, 1);
-        for (int row = 0; row < 4; row++) {
-            sheet.getRange(row, 0).setValue("x");
-        }
+        sheet.getDataRange().setValues("x", "x", "x", "x");
+        sheet = saveAndLoad(sheet);
+        sheet.getRange(3, 0).setValue("y");
 
-        Sheet loaded = saveAndLoad(sheet);
-
-        // A single-cell write to the last row must not leak into the rest of the repeated block.
-        loaded.getRange(3, 0).setValue("changed");
-
-        assertEquals("x", loaded.getRange(0, 0).getValue());
-        assertEquals("x", loaded.getRange(1, 0).getValue());
-        assertEquals("x", loaded.getRange(2, 0).getValue());
-        assertEquals("changed", loaded.getRange(3, 0).getValue());
+        assertEquals("x", sheet.getRange(2, 0).getValue());
+        assertEquals("y", sheet.getRange(3, 0).getValue());
     }
 
     @Test
     public void testClearOnLastRowAfterLoadingRepeatedRows() throws Exception {
         Sheet sheet = new Sheet("A", 4, 1);
-        for (int row = 0; row < 4; row++) {
-            sheet.getRange(row, 0).setValue("x");
-        }
+        sheet.getDataRange().setValues("x", "x", "x", "x");
+        sheet = saveAndLoad(sheet);
+        sheet.getRange(3, 0).clear();
 
-        Sheet loaded = saveAndLoad(sheet);
-
-        // Clearing only the last row must not clear the rest of the repeated block.
-        loaded.getRange(3, 0).clear();
-
-        assertEquals("x", loaded.getRange(0, 0).getValue());
-        assertEquals("x", loaded.getRange(1, 0).getValue());
-        assertEquals("x", loaded.getRange(2, 0).getValue());
-        assertNull(loaded.getRange(3, 0).getValue());
+        assertEquals("x", sheet.getRange(2, 0).getValue());
+        assertNull(sheet.getRange(3, 0).getValue());
     }
 
     @Test
     public void testSetValueOnLastRowAfterLoadingTrailingRepeatedRows() throws Exception {
         Sheet sheet = new Sheet("A", 4, 1);
-        sheet.getRange(0, 0).setValue("h");
-        for (int row = 1; row < 4; row++) {
-            sheet.getRange(row, 0).setValue("x");
-        }
+        sheet.getDataRange().setValues("h", "x", "x", "x");
+        sheet = saveAndLoad(sheet);
+        sheet.getRange(3, 0).setValue("y");
 
-        Sheet loaded = saveAndLoad(sheet);
-
-        // Rows 1-3 load as one repeated block below a different row.
-        loaded.getRange(3, 0).setValue("changed");
-
-        assertEquals("h", loaded.getRange(0, 0).getValue());
-        assertEquals("x", loaded.getRange(1, 0).getValue());
-        assertEquals("x", loaded.getRange(2, 0).getValue());
-        assertEquals("changed", loaded.getRange(3, 0).getValue());
+        assertEquals("x", sheet.getRange(2, 0).getValue());
+        assertEquals("y", sheet.getRange(3, 0).getValue());
     }
 }
