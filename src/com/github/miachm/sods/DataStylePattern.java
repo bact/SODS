@@ -3,124 +3,96 @@
 
 package com.github.miachm.sods;
 
+import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * Parses the pattern strings accepted by {@link Style#setDataStyle(String)}.
  *
- * <p>Every pattern is one of three kinds, chosen automatically from its
- * content: plain text ({@code @}), a date/time pattern (letters from
- * {@code java.time.format.DateTimeFormatter}), or a numeric pattern
- * (digits, grouping, decimal point, percent, scientific notation).
- * A digit placeholder ({@code 0} or {@code #}) anywhere makes the whole
- * pattern numeric, even if date/time-looking letters are also present.
+ * <p>Patterns use {@code java.time.format.DateTimeFormatter} syntax for
+ * dates and times and {@code java.text.DecimalFormat} syntax for numbers,
+ * restricted to a strict subset: every accepted pattern is a valid Java
+ * pattern, renders the same text as Java (with {@code Locale.US}), and can
+ * be stored exactly as an ODF 1.2 {@code number:*-style}. Anything else
+ * throws {@link IllegalArgumentException} naming the offending character,
+ * its index and a fix.
  *
- * <p>{@link StyleWriter} translates the result into ODF
- * {@code number:text-style} / {@code number:date-style} /
- * {@code number:time-style} / {@code number:number-style} /
- * {@code number:percentage-style} XML. Each kind's tokens are detailed in
- * its own section below.
+ * <p>Any unquoted {@code 0} or {@code #} makes a number pattern; otherwise
+ * unquoted date/time letters make a date/time pattern. Text in
+ * {@code '...'} is literal, and {@code ''} is a literal single quote
+ * ({@code "HH''mm"} &rarr; {@code 14'07}).
  *
- * <h2>Date/time tokens</h2>
- * <p>{@code y M d G E w Q q H h m s S a} use the exact semantics of the
- * corresponding {@code java.time.format.DateTimeFormatter} pattern letters.
- * Case is significant: {@code s} is whole seconds, {@code S} is
- * fraction-of-second. Repeat count controls padding, same as
- * {@code DateTimeFormatter}.
+ * <h2>Date/time letters</h2>
+ * <table border="1">
+ * <caption>Examples for 2026-10-05 14:07:09.123</caption>
+ * <tr><th>Pattern</th><th>Meaning</th><th>Example</th></tr>
+ * <tr><td>{@code yy}, {@code yyyy}</td><td>year, 2 or 4 digits</td><td>{@code 26}, {@code 2026}</td></tr>
+ * <tr><td>{@code M}, {@code MM}, {@code MMM}, {@code MMMM}</td><td>month</td><td>{@code 10}, {@code 10}, {@code Oct}, {@code October}</td></tr>
+ * <tr><td>{@code d}, {@code dd}</td><td>day of month</td><td>{@code 5}, {@code 05}</td></tr>
+ * <tr><td>{@code E} to {@code EEE}, {@code EEEE}</td><td>day of week</td><td>{@code Mon}, {@code Monday}</td></tr>
+ * <tr><td>{@code QQQ}, {@code QQQQ}</td><td>quarter</td><td>{@code Q4}, {@code 4th quarter}</td></tr>
+ * <tr><td>{@code H}, {@code HH}</td><td>hour 0-23</td><td>{@code 14}, {@code 14}</td></tr>
+ * <tr><td>{@code h a}, {@code hh a}</td><td>hour 1-12, requires {@code a} (AM/PM)</td><td>{@code 2 PM}, {@code 02 PM}</td></tr>
+ * <tr><td>{@code m}, {@code mm}</td><td>minute; must follow an hour or precede seconds</td><td>{@code HH:mm} &rarr; {@code 14:07}</td></tr>
+ * <tr><td>{@code s}, {@code ss}</td><td>second</td><td>{@code 9}, {@code 09}</td></tr>
+ * <tr><td>{@code ss.S} to {@code ss.SSSSSSSSS}</td><td>fraction of second, only after {@code s.}</td><td>{@code 09.1}, {@code 09.123}</td></tr>
+ * </table>
+ *
+ * <p>Each field may appear once. Unquoted separators may be space and
+ * {@code - : / . ,}; quote any other text, including {@code T}:
+ * {@code "yyyy-MM-dd'T'HH:mm:ss.SSS"} &rarr;
+ * {@code 2026-10-05T14:07:09.123}.
+ *
+ * <h2>Number symbols</h2>
+ * <table border="1">
+ * <caption>Examples for 1234.5 and 0.5</caption>
+ * <tr><th>Symbol</th><th>Meaning</th><th>Example</th></tr>
+ * <tr><td>{@code 0}</td><td>mandatory digit</td><td>{@code 000.0} &rarr; {@code 1234.5}, {@code 000.5}</td></tr>
+ * <tr><td>{@code #}</td><td>optional integer digit, before any {@code 0}</td><td>{@code #.00} &rarr; {@code 1234.50}, {@code .50}</td></tr>
+ * <tr><td>{@code ,}</td><td>grouping; exactly 3 digits after the last comma</td><td>{@code #,##0.00} &rarr; {@code 1,234.50}</td></tr>
+ * <tr><td>{@code .}</td><td>decimal point; only {@code 0} after it</td><td>{@code 0.00} &rarr; {@code 1234.50}</td></tr>
+ * <tr><td>{@code %}</td><td>percentage (value &times; 100); once, in the prefix or suffix</td><td>{@code 0.0%} &rarr; {@code 50.0%}; {@code %0.0} &rarr; {@code %50.0}</td></tr>
+ * <tr><td>other text</td><td>literal prefix or suffix</td><td>{@code $#,##0.00} &rarr; {@code $1,234.50}; {@code 0.00 kg} &rarr; {@code 1234.50 kg}</td></tr>
+ * </table>
+ *
+ * <h2>Rejected, and what to use instead</h2>
  * <ul>
- *     <li>{@code y} -- year-of-era. &lt;4 repeats = 2-digit, 4+ = 4-digit
- *     (ODF only has these two year styles).</li>
- *     <li>{@code M} -- month-of-year. 1 = unpadded numeric, 2 = padded
- *     numeric, 3 = abbreviated name, 4+ = full name.</li>
- *     <li>{@code d} -- day-of-month. 1 = unpadded, 2+ = padded.</li>
- *     <li>{@code G} -- era (e.g. AD). &lt;4 repeats = short, 4+ = long.</li>
- *     <li>{@code E} -- day-of-week name (e.g. Tue), always textual --
- *     matches ODF's {@code number:day-of-week}, which has no numeric form.
- *     &lt;4 = short, 4+ = long. Lowercase {@code e}/{@code c} aren't
- *     supported: they can mean a numeric weekday at low repeat counts,
- *     which ODF can't render.</li>
- *     <li>{@code w} -- week-of-year. ODF's {@code number:week-of-year} has
- *     no style attribute, so repeat count is accepted but ignored.
- *     Uppercase {@code W} (week-of-month) isn't supported -- ODF has no
- *     element for it.</li>
- *     <li>{@code Q}/{@code q} -- quarter-of-year. Both cases accepted, same
- *     meaning. Unlike {@code Y}/{@code D}/{@code A}, the case split in real
- *     {@code DateTimeFormatter} is only grammatical context, and ODF's
- *     {@code number:quarter} has no such distinction to lose. 1-2 repeats
- *     = short (numeric), 3+ = long (textual).</li>
- *     <li>{@code H} -- hour-of-day, 24h. 1 = unpadded, 2+ = padded. Must
- *     not pair with {@code a} -- ODF always renders 12-hour when an AM/PM
- *     marker is present, so that combination is contradictory and
- *     rejected.</li>
- *     <li>{@code h} -- clock-hour-of-am-pm, 12h. Requires a paired
- *     {@code a} -- ODF has no attribute distinguishing 12h from 24h, so a
- *     bare {@code h} would silently render as 24h otherwise. Same padding
- *     rule.</li>
- *     <li>{@code m} -- minute-of-hour. 1 = unpadded, 2+ = padded.</li>
- *     <li>{@code s} -- second-of-minute. 1 = unpadded, 2+ = padded.</li>
- *     <li>{@code S} -- fraction-of-second digits. Only valid right after a
- *     {@code s} run and a literal {@code .}, e.g. {@code "ss.SSS"} =
- *     2-digit seconds + 3 fractional digits. A standalone {@code S} is
- *     rejected -- ODF's {@code number:seconds} always needs a whole-seconds
- *     field to attach the fraction to.</li>
- *     <li>{@code a} -- am-pm-of-day marker.</li>
+ *     <li>{@code y}, {@code yyy}: use {@code yy} or {@code yyyy}.</li>
+ *     <li>{@code Q}, {@code QQ}, {@code q}: use {@code QQQ} or {@code QQQQ}.</li>
+ *     <li>Bare {@code T}: use {@code 'T'}.</li>
+ *     <li>{@code G} (era), {@code w} (week) and every letter not listed
+ *     above: no matching ODF 1.2 rendering. Quote a letter to print it.</li>
+ *     <li>{@code h} without {@code a}, {@code H} with {@code a}, a lone
+ *     {@code S}, {@code m} without an hour or seconds next to it, a
+ *     repeated field.</li>
+ *     <li>{@code 0.0#}, {@code #.##}: use {@code 0.00} (ODF 1.2 has a
+ *     fixed number of decimal places).</li>
+ *     <li>{@code E} (scientific notation); quote it in text, e.g.
+ *     {@code "0.00 'EUR'"}.</li>
+ *     <li>{@code ;} (negative subpattern), &permil;, &curren;,
+ *     a grouping size other than 3, and bare {@code -} (use
+ *     {@code '-'}).</li>
+ *     <li>Uppercase {@code Y}, {@code D}, {@code A} anywhere, as a typo
+ *     guard; quote them to print them.</li>
  * </ul>
  *
- * <h3>Date/time limitations</h3>
- * <p>Uppercase {@code Y} (week-based-year), {@code D} (day-of-year), and
- * {@code A} (milli-of-day) are rejected. ODF 1.2 has nothing to map those onto.
- * This rejection is unconditional, since these three letters have no valid
- * meaning anywhere in this grammar and are always a typo signal.
+ * <h2>Known rendering differences</h2>
+ * <p>Spreadsheet applications round halves up where Java rounds half-even
+ * ({@code 0} on 2.5: Java {@code 2}, LibreOffice {@code 3}), show
+ * {@code 0.00} where Java shows {@code -0.00} for tiny negatives, and use
+ * the Julian calendar before 1582-10-15. Month and day names follow the
+ * document locale.
  *
- * <p>No zone/offset, nano-of-second, padding, or optional-section syntax.
- * ODF 1.2 has nothing to map those onto.
- *
- * <h3>YYYY-MM-DD grandfathered exception</h3>
- * <p>To keep backward compatibility, {@code "YYYY-MM-DD"} is accepted and
- * parses like {@code "yyyy-MM-dd"}.
- * No other uppercase usage gets this treatment.
- *
- * <h2>Numeric tokens</h2>
- * <p>Mostly matches {@code java.text.DecimalFormat}'s own convention.
- * <ul>
- *     <li>{@code 0} -- mandatory digit.</li>
- *     <li>{@code #} -- optional digit.</li>
- *     <li>{@code ,} -- grouping (thousands) flag; not placed literally, ODF
- *     inserts it.</li>
- *     <li>{@code .} -- splits integer and fraction digit runs.</li>
- *     <li>{@code %} -- marks the pattern as a percentage. Stripped wherever
- *     it appears, always re-emitted as a trailing literal {@code %}. Not
- *     combinable with {@code E} -- ODF's percentage-style only allows a
- *     plain number, not scientific notation.</li>
- *     <li>{@code E} -- scientific notation, matching
- *     {@code java.text.DecimalFormat}'s own convention (e.g.
- *     {@code "0.00E00"}). Must be followed by at least one {@code 0}; that
- *     count sets the minimum exponent digits.</li>
- * </ul>
- *
- * <h2>Quoting and validation</h2>
- * <p>{@code '...'} quotes literal text. {@code ''} inside an open quote is
- * a literal single quote, e.g. {@code "'it''s'"} → {@code it's}.
- * A standalone {@code ''} with nothing else around it is the empty string.
- *
- * <p>In a date/time pattern, any unquoted character that isn't a token
- * letter above must be one of the common separators
- * {@code space - : / . , T}, or it's rejected. This catches a mistyped or
- * unsupported letter (e.g. {@code N}, or uppercase
- * {@code Y}/{@code D}/{@code A}) instead of silently treating it as
- * decoration.
- *
- * <p>Numeric patterns don't have that restriction -- unquoted prefix/suffix
- * text (currency symbols, unit labels) is common and unambiguous there.
- * The one exception is uppercase {@code Y}/{@code D}/{@code A}, which
- * stay rejected even in a numeric pattern.
- *
- * <h2>References</h2>
- * <p>ODF's {@code number:*-style} elements are defined in OpenDocument
- * v1.2 Part 1, section 16.27 (date/time/number/percentage styles); the
- * RelaxNG schema has the exact element and attribute list this class was
- * checked against.
+ * <h2>Legacy patterns</h2>
+ * <p>{@code @} (plain text) and {@code YYYY-MM-DD} (same as
+ * {@code yyyy-MM-dd}) are kept for backward compatibility. They are matched
+ * exactly and are not Java patterns.
  *
  * @see <a href="https://docs.oasis-open.org/office/v1.2/os/OpenDocument-v1.2-os-part1.html#__RefHeading__1416346_253892949">OpenDocument v1.2 Part 1: OpenDocument Schema</a>
  * @see <a href="https://docs.oasis-open.org/office/v1.2/os/OpenDocument-v1.2-os-schema.rng">OpenDocument v1.2 RelaxNG schema</a>
@@ -136,8 +108,8 @@ final class DataStylePattern {
     // What one letter run in a date/time pattern means, e.g. 'y' -> YEAR,
     // 's' -> SECOND. TEXT is literal/separator text, not a letter run.
     enum DateTimeFieldType {
-        YEAR, MONTH, DAY, ERA, DAY_OF_WEEK, WEEK_OF_YEAR, QUARTER,
-        HOUR24, HOUR12, MINUTE, SECOND, FRACTION_SECOND, AMPM, TEXT
+        YEAR, MONTH, DAY, DAY_OF_WEEK, QUARTER, HOUR24, HOUR12, MINUTE,
+        SECOND, AMPM, TEXT
     }
 
     // One tokenized run from a date/time pattern. "yyyy-MM-dd" tokenizes
@@ -175,16 +147,14 @@ final class DataStylePattern {
 
     // The whole parsed shape of a numeric pattern, e.g. "$#,##0.00%" ->
     // prefix="$", minIntegerDigits=1, decimalPlaces=2, grouping=true,
-    // percentage=true.
+    // percentage=true, suffix="%".
     static final class NumberSpec {
         final String prefix;           // e.g. "$#,##0.00" -> "$"
         final String suffix;           // e.g. "0.00 kg" -> " kg"
         final int minIntegerDigits;    // count of '0's in the integer part
-        final int decimalPlaces;       // count of '0'/'#' after '.'
+        final int decimalPlaces;       // count of '0's after '.'
         final boolean grouping;        // ',' present
-        final boolean percentage;      // '%' present
-        final boolean scientific;      // 'E' present
-        final int minExponentDigits;   // count of '0's after 'E'
+        final boolean percentage;      // '%' present (kept in prefix/suffix)
 
         NumberSpec(
                 String prefix,
@@ -192,32 +162,23 @@ final class DataStylePattern {
                 int minIntegerDigits,
                 int decimalPlaces,
                 boolean grouping,
-                boolean percentage,
-                boolean scientific,
-                int minExponentDigits) {
+                boolean percentage) {
             this.prefix = prefix;
             this.suffix = suffix;
             this.minIntegerDigits = minIntegerDigits;
             this.decimalPlaces = decimalPlaces;
             this.grouping = grouping;
             this.percentage = percentage;
-            this.scientific = scientific;
-            this.minExponentDigits = minExponentDigits;
         }
     }
 
-    private static final String DATE_TIME_LETTERS = "yMdGEwQqHhmsSa";
-    private static final String NUMBER_TOKENS = "0#";
-    // Y/D/A have no valid meaning anywhere in this grammar (unlike W/e/c,
-    // which are only invalid in DATE_TIME context -- W could be a real
-    // "Watts" unit label in a NUMBER pattern). So these three are rejected
-    // unconditionally, even inside an otherwise-permissive NUMBER pattern.
+    // Y/D/A have no valid meaning anywhere in this grammar, so they are
+    // rejected even inside an otherwise-permissive NUMBER pattern.
     private static final String ALWAYS_INVALID_LETTERS = "YDA";
     private static final String LEGACY_ISO_DATE_LITERAL = "YYYY-MM-DD";
     private static final String CANONICAL_ISO_DATE = "yyyy-MM-dd";
-    // Package-private so DataStyleReader can reuse it as the source of
-    // truth for quoting.
-    static final String ALLOWED_BARE_LITERALS = " -:/.,T";
+    // T is not here: Java reserves letters, so users write 'T' (P1).
+    static final String ALLOWED_BARE_LITERALS = " -:/.,";
 
     final Kind kind;
     final List<DateTimeField> dateTimeFields;
@@ -236,7 +197,7 @@ final class DataStylePattern {
         for (DateTimeField field : dateTimeFields) {
             switch (field.type) {
                 case YEAR: case MONTH: case DAY:
-                case ERA: case DAY_OF_WEEK: case WEEK_OF_YEAR: case QUARTER:
+                case DAY_OF_WEEK: case QUARTER:
                     return true;
                 default:
                     break;
@@ -255,213 +216,287 @@ final class DataStylePattern {
         }
         if (LEGACY_ISO_DATE_LITERAL.equals(pattern)) {
             // Permanent compat shim for the pre-existing literal.
-            // See class Javadoc.
             return parse(CANONICAL_ISO_DATE);
         }
 
         Flat flat = flatten(pattern);
-
+        boolean hasPlaceholder = false;
         boolean hasLetter = false;
-        boolean hasDigit = false;
-        int invalidIndex = -1;
-        char invalidChar = 0;
         for (int i = 0; i < flat.text.length(); i++) {
             if (flat.literal[i]) continue;
             char c = flat.text.charAt(i);
-            if (DATE_TIME_LETTERS.indexOf(c) >= 0) hasLetter = true;
-            if (NUMBER_TOKENS.indexOf(c) >= 0) hasDigit = true;
-            if (invalidIndex < 0 && ALWAYS_INVALID_LETTERS.indexOf(c) >= 0) {
-                invalidIndex = i;
-                invalidChar = c;
+            // Checked before classification so "YYYY-MM-01" can't hide
+            // behind a digit placeholder.
+            if (ALWAYS_INVALID_LETTERS.indexOf(c) >= 0) {
+                throw reject("Unsupported letter '" + c + "' at index "
+                        + flat.src[i] + " (uppercase Y/D/A have no valid "
+                        + "meaning here); quote it as '" + c
+                        + "' or remove it", pattern);
             }
+            if (c == '0' || c == '#') hasPlaceholder = true;
+            else if (isAsciiLetter(c)) hasLetter = true;
         }
 
-        // Checked before classification: Y/D/A are typo signals no
-        // matter what kind the rest of the pattern turns out to be, so
-        // they can't hide behind an incidental digit placeholder (e.g.
-        // "YYYY-MM-01" must not silently become a NUMBER pattern).
-        if (invalidIndex >= 0) {
-            throw new IllegalArgumentException("Unrecognized character '"
-                    + invalidChar + "' in data style pattern at index "
-                    + invalidIndex + " -- uppercase Y/D/A have no valid "
-                    + "meaning in this grammar; wrap literal text in "
-                    + "single quotes, e.g. '" + invalidChar
-                    + "', or remove it: " + pattern);
-        }
-
-        // A digit placeholder always wins classification. Numeric unit
-        // labels like "0.00 m" or "0.00 s" reuse letters that are also
-        // date/time tokens (m, s, h, d, y, a); requiring those to be
-        // quoted would make ordinary numeric patterns awkward. So the
-        // stricter DATE_TIME allowlist only kicks in when no digit
-        // placeholder is present at all.
-        if (hasDigit) {
-            return new DataStylePattern(
+        DataStylePattern result;
+        if (hasPlaceholder) {
+            result = new DataStylePattern(
                     Kind.NUMBER, null, parseNumber(flat, pattern));
-        }
-        if (hasLetter) {
-            return new DataStylePattern(
+        } else if (hasLetter) {
+            result = new DataStylePattern(
                     Kind.DATE_TIME, parseDateTime(flat, pattern), null);
+        } else {
+            throw reject("Unrecognized data style pattern (expected "
+                    + "date/time letters like y,M,d,H,h,m,s,S,a or numeric "
+                    + "placeholders like 0,#)", pattern);
         }
-        throw new IllegalArgumentException(
-                "Unrecognized data style pattern (expected date/time "
-                        + "letters like y,M,d,H,h,m,s,S,a or numeric "
-                        + "placeholders like 0,#): " + pattern);
+        // Safety net (P1): whatever we accepted must be valid Java.
+        javaGate(result.kind, pattern);
+        return result;
     }
 
+    // P1: an accepted pattern must also be a valid JDK pattern.
+    private static void javaGate(Kind kind, String pattern) {
+        String api = kind == Kind.DATE_TIME
+                ? "DateTimeFormatter" : "DecimalFormat";
+        try {
+            if (kind == Kind.DATE_TIME) {
+                DateTimeFormatter.ofPattern(pattern);
+            } else {
+                new DecimalFormat(pattern,
+                        DecimalFormatSymbols.getInstance(Locale.ROOT));
+            }
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Not a valid " + api
+                    + " pattern: " + e.getMessage() + ": " + pattern, e);
+        }
+    }
+
+    // P4: every message ends with the original pattern.
+    private static IllegalArgumentException reject(
+            String problem, String pattern) {
+        return new IllegalArgumentException(problem + ": " + pattern);
+    }
+
+    private static boolean isAsciiLetter(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    }
+
+    // The pattern with quoting resolved. literal[i] marks characters that
+    // were quoted; src[i] is the index of text[i] in the original pattern.
     private static final class Flat {
         final String text;
         final boolean[] literal;
+        final int[] src;
 
-        Flat(String text, boolean[] literal) {
+        Flat(String text, boolean[] literal, int[] src) {
             this.text = text;
             this.literal = literal;
+            this.src = src;
         }
     }
 
     private static Flat flatten(String pattern) {
-        StringBuilder text = new StringBuilder();
-        List<Boolean> literalFlags = new ArrayList<>();
-        int i = 0;
         int n = pattern.length();
+        StringBuilder text = new StringBuilder();
+        boolean[] literal = new boolean[n];
+        int[] src = new int[n];
+        boolean inQuote = false;
+        int quoteStart = -1;
+        int i = 0;
         while (i < n) {
             char c = pattern.charAt(i);
             if (c == '\'') {
-                i++; // consume opening quote
-                while (true) {
-                    if (i >= n) {
-                        throw new IllegalArgumentException(
-                                "Unterminated ' (literal quote) in data "
-                                        + "style pattern: " + pattern);
-                    }
-                    char cc = pattern.charAt(i);
-                    if (cc == '\'') {
-                        if (i + 1 < n && pattern.charAt(i + 1) == '\'') {
-                            // '' inside an open quote is an escaped
-                            // literal quote character.
-                            text.append('\'');
-                            literalFlags.add(true);
-                            i += 2;
-                        } else {
-                            i++; // consume closing quote
-                            break;
-                        }
-                    } else {
-                        text.append(cc);
-                        literalFlags.add(true);
-                        i++;
-                    }
+                int run = 0;
+                while (i + run < n && pattern.charAt(i + run) == '\'') run++;
+                // DateTimeFormatter and DecimalFormat disagree on this (P1).
+                if (run >= 4 && !inQuote) {
+                    throw reject("Run of " + run + " apostrophes at index "
+                            + i + " is ambiguous; use 'it''s' style text "
+                            + "or fewer apostrophes", pattern);
+                }
+                if (i + 1 < n && pattern.charAt(i + 1) == '\'') {
+                    // Java: '' is always one literal quote.
+                    src[text.length()] = i;
+                    literal[text.length()] = true;
+                    text.append('\'');
+                    i += 2;
+                } else {
+                    inQuote = !inQuote;
+                    quoteStart = i;
+                    i++;
                 }
             } else {
+                src[text.length()] = i;
+                literal[text.length()] = inQuote;
                 text.append(c);
-                literalFlags.add(false);
                 i++;
             }
         }
-        boolean[] literal = new boolean[literalFlags.size()];
-        for (int k = 0; k < literal.length; k++) {
-            literal[k] = literalFlags.get(k);
+        if (inQuote) {
+            throw reject("Unterminated ' (quote opened at index "
+                    + quoteStart + ")", pattern);
         }
-        return new Flat(text.toString(), literal);
+        return new Flat(text.toString(), literal, src);
     }
 
     private static DateTimeFieldType letterFieldType(char c) {
-        // Case-sensitive, matching DateTimeFormatter's own letters. See
-        // class Javadoc for why Y/D/A are excluded, why Q/q are aliased,
-        // and why only uppercase E is supported.
+        // Case-sensitive, matching DateTimeFormatter's own letters.
         switch (c) {
             case 'y': return DateTimeFieldType.YEAR;
             case 'M': return DateTimeFieldType.MONTH;
             case 'd': return DateTimeFieldType.DAY;
-            case 'G': return DateTimeFieldType.ERA;
             case 'E': return DateTimeFieldType.DAY_OF_WEEK;
-            case 'w': return DateTimeFieldType.WEEK_OF_YEAR;
-            case 'Q': case 'q': return DateTimeFieldType.QUARTER;
+            case 'Q': return DateTimeFieldType.QUARTER;
             case 'H': return DateTimeFieldType.HOUR24;
             case 'h': return DateTimeFieldType.HOUR12;
             case 'm': return DateTimeFieldType.MINUTE;
             case 's': return DateTimeFieldType.SECOND;
-            case 'S': return DateTimeFieldType.FRACTION_SECOND;
             case 'a': return DateTimeFieldType.AMPM;
             default: return null;
         }
     }
 
+    // Allowed run lengths per letter; each maps to an ODF style (P2).
+    private static boolean validCount(char c, int count) {
+        switch (c) {
+            case 'y': return count == 2 || count == 4;
+            case 'M': case 'E': return count <= 4;
+            case 'Q': return count == 3 || count == 4;
+            case 'a': return count == 1;
+            case 'S': return count <= 9;
+            default: return count <= 2;
+        }
+    }
+
+    private static String countHint(char c) {
+        switch (c) {
+            case 'y': return "use yy or yyyy";
+            case 'M': return "use M, MM, MMM or MMMM";
+            case 'E': return "use E, EE, EEE or EEEE";
+            case 'Q': return "use QQQ or QQQQ";
+            case 'a': return "use a";
+            case 'S': return "use 1 to 9 S";
+            default: return "use " + c + " or " + c + c;
+        }
+    }
+
+    private static int runEnd(Flat flat, int start) {
+        int j = start;
+        while (j < flat.text.length() && !flat.literal[j]
+                && flat.text.charAt(j) == flat.text.charAt(start)) {
+            j++;
+        }
+        return j;
+    }
+
+    private static void checkCount(
+            Flat flat, int start, int end, String pattern) {
+        char c = flat.text.charAt(start);
+        if (!validCount(c, end - start)) {
+            throw reject("Letter run '" + flat.text.substring(start, end)
+                    + "' at index " + flat.src[start] + " is not allowed; "
+                    + countHint(c), pattern);
+        }
+    }
+
     private static List<DateTimeField> parseDateTime(
-            Flat flat, String originalPattern) {
+            Flat flat, String pattern) {
         List<DateTimeField> fields = new ArrayList<>();
         String text = flat.text;
         int n = text.length();
         int i = 0;
         while (i < n) {
-            if (flat.literal[i]) {
-                int j = i;
-                StringBuilder literalText = new StringBuilder();
-                while (j < n && flat.literal[j]) {
-                    literalText.append(text.charAt(j));
-                    j++;
-                }
-                fields.add(DateTimeField.ofText(literalText.toString()));
-                i = j;
-                continue;
-            }
-
             char c = text.charAt(i);
-            DateTimeFieldType type = letterFieldType(c);
-            if (type != null) {
-                int j = i;
-                while (j < n && !flat.literal[j]
-                        && letterFieldType(text.charAt(j)) == type) {
-                    j++;
-                }
-                fields.add(DateTimeField.of(type, j - i));
-                i = j;
-                continue;
-            }
-
-            if (ALLOWED_BARE_LITERALS.indexOf(c) >= 0) {
+            if (flat.literal[i] || ALLOWED_BARE_LITERALS.indexOf(c) >= 0) {
                 fields.add(DateTimeField.ofText(String.valueOf(c)));
                 i++;
                 continue;
             }
-
-            throw new IllegalArgumentException("Unrecognized character '"
-                    + c + "' in date/time data style pattern at index " + i
-                    + "; wrap literal text in single quotes, e.g. '" + c
-                    + "', or remove it: " + originalPattern);
+            if (!isAsciiLetter(c)) {
+                throw reject("Unquoted '" + c + "' at index " + flat.src[i]
+                        + " is not allowed in a date/time pattern; quote it "
+                        + "as '" + c + "'", pattern);
+            }
+            if (c == 'S') {
+                throw reject("Fraction letter 'S' at index " + flat.src[i]
+                        + " must directly follow a seconds run and '.', "
+                        + "e.g. ss.SSS", pattern);
+            }
+            DateTimeFieldType type = letterFieldType(c);
+            if (type == null) {
+                throw reject("Unsupported letter '" + c + "' at index "
+                        + flat.src[i] + " (not representable in ODF 1.2); "
+                        + "quote it as '" + c + "' to print it literally",
+                        pattern);
+            }
+            int j = runEnd(flat, i);
+            checkCount(flat, i, j, pattern);
+            if (type == DateTimeFieldType.SECOND && j + 1 < n
+                    && !flat.literal[j] && text.charAt(j) == '.'
+                    && !flat.literal[j + 1] && text.charAt(j + 1) == 'S') {
+                // ODF 1.2: number:seconds carries decimal-places (P2).
+                int end = runEnd(flat, j + 1);
+                checkCount(flat, j + 1, end, pattern);
+                fields.add(DateTimeField.ofSecond(j - i, end - j - 1));
+                i = end;
+                continue;
+            }
+            fields.add(DateTimeField.of(type, j - i));
+            i = j;
         }
 
-        mergeSecondsFraction(fields);
         mergeAdjacentText(fields);
-        validateHourAmPmConsistency(fields, originalPattern);
-        validateNoStandaloneFractionSeconds(fields, originalPattern);
+        validateEachFieldOnce(fields, pattern);
+        validateHourAmPmConsistency(fields, pattern);
+        validateMinuteHasNeighbour(fields, pattern);
         return fields;
     }
 
-    private static void validateNoStandaloneFractionSeconds(
-            List<DateTimeField> fields, String originalPattern) {
-        // mergeSecondsFraction folds a valid "s.S" run into one SECOND
-        // field. Anything left over here wasn't preceded by a
-        // whole-seconds field, which ODF has no way to render.
+    private static void validateEachFieldOnce(
+            List<DateTimeField> fields, String pattern) {
+        // ODF 1.2 16.27.10/16.27.18: one instance of each element (P2).
+        Set<DateTimeFieldType> seen = EnumSet.noneOf(DateTimeFieldType.class);
         for (DateTimeField field : fields) {
-            if (field.type == DateTimeFieldType.FRACTION_SECOND) {
-                throw new IllegalArgumentException(
-                        "Data style pattern uses 'S' (fractional-second "
-                                + "digits) without an immediately "
-                                + "preceding whole-seconds field and "
-                                + "literal '.' -- 'S' only means "
-                                + "fraction-of-second when it directly "
-                                + "follows \"s.\", e.g. \"ss.SSS\": "
-                                + originalPattern);
+            if (field.type != DateTimeFieldType.TEXT
+                    && !seen.add(field.type)) {
+                throw reject("Date/time field " + field.type
+                        + " appears more than once; ODF allows each field "
+                        + "at most once", pattern);
+            }
+        }
+    }
+
+    private static DateTimeFieldType neighbour(
+            List<DateTimeField> fields, int from, int step) {
+        for (int k = from + step; k >= 0 && k < fields.size(); k += step) {
+            if (fields.get(k).type != DateTimeFieldType.TEXT) {
+                return fields.get(k).type;
+            }
+        }
+        return null;
+    }
+
+    private static void validateMinuteHasNeighbour(
+            List<DateTimeField> fields, String pattern) {
+        // LibreOffice re-reads a lone number:minutes as month (P2).
+        for (int i = 0; i < fields.size(); i++) {
+            if (fields.get(i).type != DateTimeFieldType.MINUTE) continue;
+            DateTimeFieldType before = neighbour(fields, i, -1);
+            DateTimeFieldType after = neighbour(fields, i, 1);
+            boolean ok = before == DateTimeFieldType.HOUR24
+                    || before == DateTimeFieldType.HOUR12
+                    || after == DateTimeFieldType.SECOND;
+            if (!ok) {
+                throw reject("Minutes 'm' must follow an hour field or "
+                        + "precede a seconds field, otherwise ODF readers "
+                        + "treat them as a month", pattern);
             }
         }
     }
 
     private static void validateHourAmPmConsistency(
             List<DateTimeField> fields, String originalPattern) {
-        // ODF's number:hours has no 12h/24h attribute -- a sibling
-        // number:am-pm element is what decides it. Enforce the pairing
-        // 'h'/'H' promise instead of rendering inconsistently.
+        // ODF 1.2 16.27.22: an am-pm element makes hours 1-12, so h and a must pair (P2).
         boolean hasHour12 = false;
         boolean hasHour24 = false;
         boolean hasAmPm = false;
@@ -471,46 +506,21 @@ final class DataStylePattern {
             if (field.type == DateTimeFieldType.AMPM) hasAmPm = true;
         }
         if (hasHour12 && hasHour24) {
-            throw new IllegalArgumentException(
-                    "Data style pattern mixes both 'H' (24-hour) and 'h' "
-                            + "(12-hour) tokens: " + originalPattern);
+            throw reject("Data style pattern mixes both 'H' (24-hour) and "
+                    + "'h' (12-hour) tokens", originalPattern);
         }
         if (hasHour12 && !hasAmPm) {
-            throw new IllegalArgumentException(
-                    "Data style pattern uses 'h' (12-hour clock) without "
-                            + "a paired 'a' AM/PM marker; ODF cannot "
-                            + "distinguish that from a 24-hour clock, so "
-                            + "it would render the hour wrong. Add 'a', "
-                            + "or use 'H' for a 24-hour clock: "
-                            + originalPattern);
+            throw reject("Data style pattern uses 'h' (12-hour clock) "
+                    + "without a paired 'a' AM/PM marker; ODF cannot "
+                    + "distinguish that from a 24-hour clock. Add 'a', or "
+                    + "use 'H' for a 24-hour clock", originalPattern);
         }
         if (hasHour24 && hasAmPm) {
-            throw new IllegalArgumentException(
-                    "Data style pattern uses 'H' (24-hour clock) "
-                            + "together with an 'a' AM/PM marker; ODF "
-                            + "always renders a 12-hour clock whenever an "
-                            + "AM/PM marker is present, so this "
-                            + "combination is contradictory. Use 'h' for "
-                            + "a 12-hour clock instead: " + originalPattern);
-        }
-    }
-
-    private static void mergeSecondsFraction(List<DateTimeField> fields) {
-        for (int i = 0; i + 2 < fields.size(); i++) {
-            DateTimeField secondField = fields.get(i);
-            DateTimeField dotField = fields.get(i + 1);
-            DateTimeField fractionField = fields.get(i + 2);
-            if (secondField.type == DateTimeFieldType.SECOND
-                    && dotField.type == DateTimeFieldType.TEXT
-                    && ".".equals(dotField.text)
-                    && fractionField.type
-                            == DateTimeFieldType.FRACTION_SECOND) {
-                DateTimeField merged = DateTimeField.ofSecond(
-                        secondField.length, fractionField.length);
-                fields.set(i, merged);
-                fields.remove(i + 2);
-                fields.remove(i + 1);
-            }
+            throw reject("Data style pattern uses 'H' (24-hour clock) "
+                    + "together with an 'a' AM/PM marker; ODF always "
+                    + "renders a 12-hour clock whenever an AM/PM marker is "
+                    + "present, so this is contradictory. Use 'h' for a "
+                    + "12-hour clock instead", originalPattern);
         }
     }
 
@@ -528,127 +538,109 @@ final class DataStylePattern {
         }
     }
 
-    private static NumberSpec parseNumber(
-            Flat flat, String originalPattern) {
+    private enum Phase { PREFIX, INTEGER, FRACTION, SUFFIX }
+
+    // One forward scan: PREFIX, INTEGER, optional FRACTION, SUFFIX.
+    private static NumberSpec parseNumber(Flat flat, String pattern) {
         String text = flat.text;
-        boolean[] literal = flat.literal;
-        int n = text.length();
-
-        // 'E' marks scientific notation -> ODF's number:scientific-number.
-        // Only the first unquoted 'E' counts; the mantissa scan stops
-        // there so exponent digits aren't mistaken for mantissa digits.
-        int eIndex = -1;
-        for (int i = 0; i < n; i++) {
-            if (!literal[i] && text.charAt(i) == 'E') {
-                eIndex = i;
-                break;
-            }
-        }
-        boolean scientific = eIndex >= 0;
-        int mantissaEnd = scientific ? eIndex : n;
-
-        int firstDigit = -1;
-        int lastDigit = -1;
-        for (int i = 0; i < mantissaEnd; i++) {
-            if (!literal[i]
-                    && (text.charAt(i) == '0' || text.charAt(i) == '#')) {
-                if (firstDigit < 0) firstDigit = i;
-                lastDigit = i;
-            }
-        }
-        if (firstDigit < 0) {
-            throw new IllegalArgumentException(
-                    "Numeric data style pattern must contain at least "
-                            + "one '0' or '#': " + originalPattern);
-        }
-
-        int minExponentDigits = 0;
-        int suffixStart = lastDigit + 1;
-        if (scientific) {
-            int j = eIndex + 1;
-            int exponentDigits = 0;
-            while (j < n && !literal[j]
-                    && (text.charAt(j) == '0' || text.charAt(j) == '#')) {
-                if (text.charAt(j) == '0') exponentDigits++;
-                j++;
-            }
-            if (exponentDigits == 0) {
-                throw new IllegalArgumentException(
-                        "Scientific notation pattern must have at least "
-                                + "one '0' after 'E': " + originalPattern);
-            }
-            minExponentDigits = exponentDigits;
-            suffixStart = j;
-        }
-
-        boolean percentage = false;
+        Phase phase = Phase.PREFIX;
         StringBuilder prefix = new StringBuilder();
-        for (int i = 0; i < firstDigit; i++) {
-            if (!literal[i] && text.charAt(i) == '%') {
-                percentage = true;
-            } else {
-                prefix.append(text.charAt(i));
-            }
-        }
         StringBuilder suffix = new StringBuilder();
-        for (int i = suffixStart; i < n; i++) {
-            if (!literal[i] && text.charAt(i) == '%') {
-                percentage = true;
-            } else {
-                suffix.append(text.charAt(i));
-            }
-        }
-
+        int zeros = 0;
+        int fractionDigits = 0;
+        int sinceComma = 0;
         boolean grouping = false;
-        boolean afterDot = false;
-        boolean sawDot = false;
-        StringBuilder integerPart = new StringBuilder();
-        StringBuilder fractionPart = new StringBuilder();
-        for (int i = firstDigit; i <= lastDigit; i++) {
+        boolean dot = false;
+        boolean percent = false;
+        for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
-            boolean lit = literal[i];
-            if (!lit && c == '%') {
-                percentage = true;
-            } else if (!lit && c == ',') {
-                grouping = true;
-            } else if (!lit && c == '.') {
-                if (sawDot) {
-                    throw new IllegalArgumentException(
-                            "Numeric data style pattern cannot contain "
-                                    + "more than one decimal point: "
-                                    + originalPattern);
+            int at = flat.src[i];
+            if (!flat.literal[i]) {
+                if (c == '0' || c == '#') {
+                    if (phase == Phase.PREFIX) phase = Phase.INTEGER;
+                    if (phase == Phase.INTEGER) {
+                        if (c == '#' && zeros > 0) {
+                            throw reject("'#' after '0' at index " + at
+                                    + "; put all '#' before the '0's", pattern);
+                        }
+                        if (c == '0') zeros++;
+                        sinceComma++;
+                    } else if (phase == Phase.FRACTION) {
+                        // ODF 1.2: number:decimal-places is a fixed count (P2).
+                        if (c == '#') {
+                            throw reject("'#' after '.' at index " + at
+                                    + "; ODF decimal places are fixed, use "
+                                    + "0.00", pattern);
+                        }
+                        fractionDigits++;
+                    } else {
+                        throw reject("Digit placeholder '" + c + "' at index "
+                                + at + " after the number; quote it as '"
+                                + c + "'", pattern);
+                    }
+                    continue;
                 }
-                sawDot = true;
-                afterDot = true;
-            } else if (!lit && (c == '0' || c == '#')) {
-                if (afterDot) fractionPart.append(c);
-                else integerPart.append(c);
+                if (c == ',') {
+                    if (phase != Phase.INTEGER || sinceComma == 0) {
+                        throw reject("',' at index " + at + " must sit "
+                                + "between integer digit placeholders; "
+                                + "quote it as ','", pattern);
+                    }
+                    grouping = true;
+                    sinceComma = 0;
+                    continue;
+                }
+                if (c == '.') {
+                    if (phase == Phase.PREFIX || phase == Phase.INTEGER) {
+                        phase = Phase.FRACTION;
+                        dot = true;
+                        continue;
+                    }
+                    throw reject("'.' at index " + at + " is a second or "
+                            + "misplaced decimal point; quote it as '.'",
+                            pattern);
+                }
+                if (c == '%') {
+                    if (percent) {
+                        throw reject("Second '%' at index " + at
+                                + "; only one percent sign is allowed, "
+                                + "quote it as '%'", pattern);
+                    }
+                    percent = true;
+                } else if (c == ';') {
+                    throw reject("';' at index " + at + ": negative "
+                            + "subpatterns are not supported", pattern);
+                } else if (c == '-') {
+                    // DecimalFormat maps a bare '-' to the locale minus.
+                    throw reject("Unquoted '-' at index " + at
+                            + "; quote it as '-'", pattern);
+                } else if (c == 'E') {
+                    // ODF 1.2 cannot match Java's exponent rendering (P2).
+                    throw reject("Unquoted 'E' at index " + at
+                            + " (scientific notation is not supported); "
+                            + "quote it, e.g. '0.00 'EUR''", pattern);
+                } else if (c == '‰' || c == '¤') {
+                    throw reject("Unquoted '" + c + "' at index " + at
+                            + " is not supported; quote it as '" + c + "'",
+                            pattern);
+                }
+            }
+            if (phase == Phase.PREFIX) {
+                prefix.append(c);
+            } else {
+                phase = Phase.SUFFIX;
+                suffix.append(c);
             }
         }
-
-        int minIntegerDigits = 0;
-        for (int i = 0; i < integerPart.length(); i++) {
-            if (integerPart.charAt(i) == '0') minIntegerDigits++;
+        // ODF 1.2: number:grouping has no group size; 3 matches Java (P2).
+        if (grouping && sinceComma != 3) {
+            throw reject("Grouping needs exactly 3 digit placeholders after "
+                    + "the last ',' (e.g. #,##0)", pattern);
         }
-        int decimalPlaces = fractionPart.length();
-
-        if (scientific && percentage) {
-            // ODF's number:percentage-style content model only allows a
-            // plain number:number child, not number:scientific-number --
-            // confirmed from the RelaxNG schema.
-            throw new IllegalArgumentException(
-                    "Scientific notation cannot be combined with a "
-                            + "percentage marker: " + originalPattern);
+        if (dot && fractionDigits == 0) {
+            throw reject("'.' must be followed by at least one '0'", pattern);
         }
-
-        return new NumberSpec(
-                prefix.toString(),
-                suffix.toString(),
-                minIntegerDigits,
-                decimalPlaces,
-                grouping,
-                percentage,
-                scientific,
-                minExponentDigits);
+        return new NumberSpec(prefix.toString(), suffix.toString(), zeros,
+                fractionDigits, grouping, percent);
     }
 }
