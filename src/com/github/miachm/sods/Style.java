@@ -379,6 +379,7 @@ public final class Style implements Cloneable {
      *
      * @param dataStyle {@code null}, {@code @}, or {@code YYYY-MM-DD}
      * @throws IllegalArgumentException for any other value
+     * @see #setDataFormat(DataFormat)
      */
     public void setDataStyle(String dataStyle) {
         if (dataStyle == null)
@@ -409,7 +410,9 @@ public final class Style implements Cloneable {
      *
      * <p>At the moment, only {@link DataFormat#TEXT} and {@link DataFormat#ISO_DATE}
      * are written to the ODS file. Any other format is validated and kept by this
-     * object, but nothing is written for it.
+     * object, but nothing is written for it. Until other formats are written, a
+     * date in a cell styled with such a format is saved without a data style
+     * (office software then shows its default date format).
      *
      * @param dataFormat the format, or {@code null} for the default
      * @see DataFormat
@@ -544,8 +547,9 @@ public final class Style implements Cloneable {
         if(vertical_alignment != null)
             result.put("vertical-align", getVerticalTextAligment().toString().toLowerCase());
 
-        if (getDataStyle() != null) {
-            result.put("data-style", getDataStyle());
+        String dataStyle = getDataStyle();
+        if (dataStyle != null) {
+            result.put("data-style", dataStyle);
         }
 
         if (fontFamily != null) {

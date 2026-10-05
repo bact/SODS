@@ -139,18 +139,16 @@ public class StyleCucumber {
         assertEquals("DataFormat pattern mismatch", expectedPattern, dataFormat.getPattern());
     }
 
-    @Then("^the data style of cell (\\d+),(\\d+) is \"([^\"]*)\"$")
-    public void the_data_style_of_cell_is(int row, int column, String expectedStyle) throws Throwable {
-        String dataStyle = World.sheet.getRange(row, column).getStyle().getDataStyle();
-        assertEquals("Data style mismatch", expectedStyle, dataStyle);
-    }
-
     @When("^create a DataFormat with invalid \"([^\"]*)\" pattern \"([^\"]*)\" and catch the exception$")
     public void create_a_DataFormat_with_invalid_pattern_and_catch_the_exception(String type, String pattern) throws Throwable {
+        ExceptionChecker.reset();
+        if (!"dateTime".equals(type) && !"number".equals(type)) {
+            throw new IllegalArgumentException("unknown kind " + type);
+        }
         try {
             if ("dateTime".equals(type)) {
                 DataFormat.dateTime(pattern);
-            } else if ("number".equals(type)) {
+            } else {
                 DataFormat.number(pattern);
             }
         } catch (IllegalArgumentException e) {

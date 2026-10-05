@@ -10,35 +10,14 @@ import java.util.Locale;
 import static com.github.miachm.sods.PatternText.reject;
 
 /**
- * A number pattern in {@code java.text.DecimalFormat} syntax, restricted to
- * a strict subset: every accepted pattern is a valid Java pattern, renders
- * the same text as Java (with {@code Locale.US}), and can be stored exactly
- * as an ODF 1.2 {@code number:number-style} or
- * {@code number:percentage-style}. Anything else throws
- * {@link IllegalArgumentException} naming the offending character, its index
- * and a fix. The caller chooses the kind (number or date/time), so the string
- * is never guessed.
+ * A number pattern in {@code java.text.DecimalFormat} syntax, restricted to a
+ * strict subset: every accepted pattern is valid Java, renders the same text
+ * as Java (with {@code Locale.US}), and can be stored exactly as an ODF 1.2
+ * {@code number:number-style} or {@code number:percentage-style}. Anything
+ * else throws {@link IllegalArgumentException}.
  *
- * <p>As in {@code DecimalFormat}, unquoted letters are literal text
- * ({@code "0.00 m"}, {@code "0 days"}), except {@code E} (exponent syntax).
- * Text in {@code '...'} is literal and {@code ''} is a literal single quote.
- *
- * <table border="1">
- * <caption>Examples for 1234.5 and 0.5</caption>
- * <tr><th>Symbol</th><th>Meaning</th><th>Example</th></tr>
- * <tr><td>{@code 0}</td><td>mandatory digit</td><td>{@code 000.0} &rarr; {@code 1234.5}, {@code 000.5}</td></tr>
- * <tr><td>{@code #}</td><td>optional integer digit, before any {@code 0}</td><td>{@code #.00} &rarr; {@code 1234.50}, {@code .50}</td></tr>
- * <tr><td>{@code ,}</td><td>grouping; exactly 3 digits after the last comma</td><td>{@code #,##0.00} &rarr; {@code 1,234.50}</td></tr>
- * <tr><td>{@code .}</td><td>decimal point; only {@code 0} after it</td><td>{@code 0.00} &rarr; {@code 1234.50}</td></tr>
- * <tr><td>{@code %}</td><td>percentage (value &times; 100); once, in the prefix or suffix</td><td>{@code 0.0%} &rarr; {@code 50.0%}</td></tr>
- * <tr><td>other text</td><td>literal prefix or suffix</td><td>{@code $#,##0.00} &rarr; {@code $1,234.50}; {@code 0.00 m} &rarr; {@code 1234.50 m}</td></tr>
- * </table>
- *
- * <p>Rejected, because ODF 1.2 or spreadsheet formats differ from Java:
- * optional fraction digits ({@code 0.0#}), {@code E}, {@code ;}, {@code ‰},
- * {@code ¤}, a bare {@code -}, grouping other than 3, and the spreadsheet
- * syntax {@code ? [ ] " \ _ *}, {@code General} and {@code Standard}.
- * Quote a rejected character to print it.
+ * <p>The rules and examples are in {@link DataFormat}; this class only
+ * tokenizes and validates.
  */
 final class NumberPattern {
 
@@ -70,23 +49,13 @@ final class NumberPattern {
     private static final String DATE_TIME_LETTERS = "yMdEQHhmsSa";
 
     static NumberPattern parse(String pattern) {
-        if (pattern == null) {
-            throw new IllegalArgumentException(
-                    "Number pattern cannot be null");
-        }
         PatternText.rejectSpreadsheetName(pattern);
         PatternText.Flat flat = PatternText.flatten(pattern);
         checkHasPlaceholder(flat, pattern);
         NumberPattern result = scan(flat, pattern);
-        // Safety net (P1): whatever we accepted must be valid Java.
-        try {
-            new DecimalFormat(pattern,
-                    DecimalFormatSymbols.getInstance(Locale.ROOT));
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException(
-                    "Not a valid DecimalFormat pattern: " + e.getMessage()
-                    + ": " + pattern, e);
-        }
+        PatternText.requireJava("DecimalFormat", pattern,
+                () -> new DecimalFormat(pattern,
+                        DecimalFormatSymbols.getInstance(Locale.ROOT)));
         return result;
     }
 
@@ -100,13 +69,16 @@ final class NumberPattern {
             if (DATE_TIME_LETTERS.indexOf(c) >= 0) dateTimeLetter = true;
         }
         if (dateTimeLetter) {
-            throw reject("No digit placeholder ('0' or '#'); this looks "
-                    + "like a date/time pattern, use DataFormat.dateTime",
-                    pattern);
+            throw reject("No digit placeholder; this looks like a "
+                    + "date/time pattern, use DataFormat.dateTime", pattern);
         }
-        throw reject("No digit placeholder: a number pattern needs "
-                + "'0' or '#'", pattern);
+        throw reject((pattern.isEmpty() ? "Empty pattern" : "No digit placeholder")
+                + "; use '0' or '#'", pattern);
     }
+
+    // Java's DecimalFormat.format(double) keeps at most this many digits.
+    private static final int MAX_INTEGER_ZEROS = 309;
+    private static final int MAX_FRACTION_ZEROS = 340;
 
     // One forward scan: PREFIX, INTEGER, optional FRACTION, SUFFIX.
     private static NumberPattern scan(PatternText.Flat flat, String pattern) {
@@ -117,8 +89,9 @@ final class NumberPattern {
         int zeros = 0;
         int fractionDigits = 0;
         int sinceComma = 0;
-        boolean grouping = false;
-        boolean dot = false;
+        int firstHash = -1;
+        int lastComma = -1;
+        int dotAt = -1;
         boolean percent = false;
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
@@ -131,51 +104,77 @@ final class NumberPattern {
                             throw reject("'#' after '0' at index " + at
                                     + "; put all '#' before the '0's", pattern);
                         }
-                        if (c == '0') zeros++;
+                        if (c == '#' && firstHash < 0) firstHash = at;
+                        if (c == '0' && ++zeros > MAX_INTEGER_ZEROS) {
+                            throw tooMany("integer", at, MAX_INTEGER_ZEROS,
+                                    pattern);
+                        }
                         sinceComma++;
                     } else if (phase == Phase.FRACTION) {
-                        // ODF 1.2: number:decimal-places is a fixed count (P2).
+                        // ODF 1.2: number:decimal-places is a fixed count.
                         if (c == '#') {
                             throw reject("'#' after '.' at index " + at
                                     + "; ODF decimal places are fixed, use "
                                     + "0.00", pattern);
                         }
-                        fractionDigits++;
+                        if (++fractionDigits > MAX_FRACTION_ZEROS) {
+                            throw tooMany("fraction", at, MAX_FRACTION_ZEROS,
+                                    pattern);
+                        }
                     } else {
-                        throw reject("Digit placeholder '" + c + "' at index "
-                                + at + " after the number; quote it as '"
-                                + c + "'", pattern);
+                        throw digitAfterText(c, at, pattern);
                     }
                     continue;
                 }
                 if (c == ',') {
                     if (phase != Phase.INTEGER || sinceComma == 0) {
-                        throw reject("',' at index " + at + " must sit "
-                                + "between integer digit placeholders; "
-                                + "quote it as ','", pattern);
+                        throw PatternText.rejectAt("Misplaced ',' at index " + at
+                                + "; grouping must sit between integer digit "
+                                + "placeholders, or quote it as ','", at,
+                                pattern);
                     }
-                    grouping = true;
+                    lastComma = at;
                     sinceComma = 0;
                     continue;
                 }
                 if (c == '.') {
-                    if (phase == Phase.PREFIX || phase == Phase.INTEGER) {
+                    boolean strayInPrefix = phase == Phase.PREFIX
+                            && prefix.length() > 0
+                            && !digitPlaceholderAt(flat, i + 1);
+                    if (!strayInPrefix && (phase == Phase.PREFIX
+                            || phase == Phase.INTEGER)) {
                         phase = Phase.FRACTION;
-                        dot = true;
+                        dotAt = at;
                         continue;
                     }
-                    throw reject("'.' at index " + at + " is a second or "
-                            + "misplaced decimal point; quote it as '.'",
-                            pattern);
+                    if (phase == Phase.FRACTION || strayInPrefix
+                            || placeholderAfter(flat, i) < 0) {
+                        throw PatternText.rejectAt((phase == Phase.FRACTION
+                                ? "Second '.'" : "Unquoted '.'") + " at index "
+                                + at + (phase == Phase.FRACTION ? ""
+                                        : " after literal text")
+                                + "; quote it as '.'", at, pattern);
+                    }
+                    throw reject("'.' at index " + at + " after literal "
+                            + "text; put text after the number, e.g. "
+                            + "0.00' kr.'", pattern);
                 }
                 if (c == '%') {
                     if (percent) {
-                        throw reject("Second '%' at index " + at
-                                + "; only one percent sign is allowed, "
-                                + "quote it as '%'", pattern);
+                        throw PatternText.rejectAt("Second '%' at index " + at
+                                + "; only one is allowed, quote it as '%'",
+                                at, pattern);
                     }
                     percent = true;
                 } else {
+                    if (c == '-' && phase != Phase.PREFIX) {
+                        // 000-00-0000: the later digits are the real problem.
+                        int later = placeholderAfter(flat, i);
+                        if (later >= 0) {
+                            throw digitAfterText(text.charAt(later),
+                                    flat.src[later], pattern);
+                        }
+                    }
                     checkLiteralChar(c, at, pattern);
                 }
             }
@@ -186,68 +185,99 @@ final class NumberPattern {
                 suffix.append(c);
             }
         }
-        // ODF 1.2: number:grouping has no group size; 3 matches Java (P2).
-        if (grouping && sinceComma != 3) {
-            throw reject("Grouping needs exactly 3 digit placeholders after "
-                    + "the last ',' (e.g. #,##0)", pattern);
+        // ODF 1.2: number:grouping has no group size; 3 matches Java.
+        if (lastComma >= 0 && sinceComma != 3) {
+            throw reject("Grouping ',' at index " + lastComma + " needs "
+                    + "exactly 3 digit placeholders after it; use #,##0",
+                    pattern);
         }
-        if (dot && fractionDigits == 0) {
-            throw reject("'.' must be followed by at least one '0'", pattern);
+        if (dotAt >= 0 && fractionDigits == 0) {
+            throw reject("Decimal point '.' at index " + dotAt + " has no "
+                    + "'0' after it; write e.g. 0.00", pattern);
         }
         if (zeros == 0 && fractionDigits == 0) {
-            throw reject("Integer part has no '0' and there is no fraction; "
-                    + "spreadsheets show nothing for zero while Java shows "
-                    + "0. Use 0 or #,##0", pattern);
+            throw reject("Only '#' (first at index " + firstHash + "); "
+                    + "spreadsheets show nothing for zero, Java shows 0; use "
+                    + "0 or #,##0", pattern);
         }
         return new NumberPattern(prefix.toString(), suffix.toString(), zeros,
-                fractionDigits, grouping, percent);
+                fractionDigits, lastComma >= 0, percent);
+    }
+
+    private static boolean digitPlaceholderAt(PatternText.Flat flat, int k) {
+        return k < flat.text.length() && !flat.literal[k]
+                && (flat.text.charAt(k) == '0' || flat.text.charAt(k) == '#');
+    }
+
+    private static int placeholderAfter(PatternText.Flat flat, int from) {
+        for (int k = from; k < flat.text.length(); k++) {
+            char c = flat.text.charAt(k);
+            if (!flat.literal[k] && (c == '0' || c == '#')) return k;
+        }
+        return -1;
+    }
+
+    private static IllegalArgumentException digitAfterText(
+            char c, int at, String pattern) {
+        return reject("Digit placeholder '" + c + "' at index " + at
+                + " after literal text; only one run of digits is supported "
+                + "(store codes like 000-00-0000 as text with "
+                + "DataFormat.TEXT)", pattern);
+    }
+
+    private static IllegalArgumentException tooMany(
+            String part, int at, int limit, String pattern) {
+        return reject("More than " + limit + " '0' in the " + part + " part "
+                + "at index " + at + "; Java keeps at most " + limit
+                + " digits there", pattern);
     }
 
     // Unquoted characters that DecimalFormat treats specially or that mean
     // something else in spreadsheet formats. Other letters are plain text.
     private static void checkLiteralChar(char c, int at, String pattern) {
+        String tail = unquotedTail(c);
+        if (tail != null) {
+            throw PatternText.unquoted(at, tail, pattern);
+        }
+    }
+
+    // Message tail for a character that must be quoted; null if it is literal.
+    private static String unquotedTail(char c) {
         switch (c) {
             case ';':
-                throw reject("';' at index " + at + ": negative "
-                        + "subpatterns are not supported", pattern);
-            case '-':
-                // DecimalFormat maps a bare '-' to the locale minus.
-                throw reject("Unquoted '-' at index " + at
-                        + "; quote it as '-'", pattern);
+                return "; a separate negative section is not supported, "
+                        + "remove ';' and what follows (the minus sign is "
+                        + "automatic)";
             case 'E':
-                // ODF 1.2 cannot match Java's exponent rendering (P2).
-                throw reject("Unquoted 'E' at index " + at
-                        + " (scientific notation is not supported); "
-                        + "quote it, e.g. 0.00 'EUR'", pattern);
+                // ODF 1.2 cannot match Java's exponent rendering.
+                return " (scientific notation is not supported); quote it as "
+                        + "'E' to print it";
             case '?':
-                throw reject("Unquoted '?' at index " + at
-                        + ": fraction formats are not supported; "
-                        + "quote it as '?' to print it", pattern);
+                return PatternText.spreadsheetTail("? (fractions)", c);
             case '[': case ']':
-                throw reject(PatternText.bracketProblem(c, at, false),
-                        pattern);
+                return PatternText.spreadsheetTail(
+                        "like [Red] or [<100] (colours, conditions)", c);
             case '"':
-                throw reject("Unquoted '\"' at index " + at
-                        + ": Java quotes literal text with ', not \"; "
-                        + "write e.g. 0.00' kg'", pattern);
+                return " (Java quotes literal text with ', not \"); write "
+                        + "e.g. 0.00' kg'";
             case '\\':
-                throw reject("Unquoted '\\' at index " + at
-                        + ": Java has no backslash escape; quote the "
-                        + "text instead, e.g. 0.00' kg'", pattern);
+                return PatternText.spreadsheetTail("\\ (escape; Java has "
+                        + "none)", c);
             case '_':
-                throw reject("Unquoted '_' at index " + at
-                        + ": spreadsheet spacing (_x) is not supported; "
-                        + "quote it as '_'", pattern);
+                return PatternText.spreadsheetTail("_x (spacing)", c);
             case '*':
-                throw reject("Unquoted '*' at index " + at
-                        + ": spreadsheet fill (*x) is not supported; "
-                        + "quote it as '*'", pattern);
-            case '‰': case '¤':
-                throw reject("Unquoted '" + c + "' at index " + at
-                        + " is not supported; quote it as '" + c + "'",
-                        pattern);
+                return PatternText.spreadsheetTail("*x (fill)", c);
+            case '-': // DecimalFormat maps a bare '-' to the locale minus
+                return "; the minus sign is automatic, remove it (quote it "
+                        + "as '-' only to print it)";
+            case '\u2030':
+                return "; per mille is not supported, use 0.0% "
+                        + "(or quote it as '\u2030' to print it)";
+            case '\u00A4':
+                return "; write the currency symbol itself, e.g. $#,##0.00 or "
+                        + "\u20AC0.00";
             default:
-                break; // letters and the rest are literal, as in Java
+                return null; // letters and the rest are literal, as in Java
         }
     }
 }

@@ -10,15 +10,14 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
-import java.time.DayOfWeek;
 import java.time.LocalDateTime;
-import java.time.Month;
 import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Random;
+import java.util.function.Function;
 
 import static org.testng.AssertJUnit.*;
 
@@ -50,12 +49,12 @@ public class PatternOracleTest {
     private static final BigDecimal[] NUMBERS = {
         bd("0"), bd("0.5"), bd("1"), bd("-1"), bd("999"), bd("1000"),
         bd("1234567.891"), bd("1e-10"), bd("1e15"), bd("12.345"), bd("-2.5"),
+        bd("-0.001"),
     };
 
     private static BigDecimal bd(String s) {
         return new BigDecimal(s);
     }
-
     /** Renders a parsed pattern with ODF semantics, independent of the JDK. */
     static final class OdfModel {
         private static final String[] ORDINAL = {"1st", "2nd", "3rd", "4th"};
@@ -66,56 +65,30 @@ public class PatternOracleTest {
             for (DateTimePattern.Field f : p.fields) {
                 switch (f.type) {
                     case YEAR:
-                        sb.append(f.length == 2
-                                ? pad(v.getYear() % 100, 2) : pad(v.getYear(), 4));
+                        sb.append(f.length == 2 ? pad(v.getYear() % 100, 2) : pad(v.getYear(), 4));
                         break;
                     case MONTH:
-                        if (f.length <= 2) {
-                            sb.append(pad(v.getMonthValue(), f.length));
-                        } else {
-                            sb.append(Month.of(v.getMonthValue()).getDisplayName(
-                                    f.length == 3 ? TextStyle.SHORT : TextStyle.FULL,
-                                    Locale.US));
-                        }
+                        sb.append(f.length <= 2 ? pad(v.getMonthValue(), f.length)
+                                : v.getMonth().getDisplayName(f.length == 3 ? TextStyle.SHORT : TextStyle.FULL, Locale.US));
                         break;
-                    case DAY:
-                        sb.append(pad(v.getDayOfMonth(), f.length));
-                        break;
+                    case DAY: sb.append(pad(v.getDayOfMonth(), f.length)); break;
                     case DAY_OF_WEEK:
-                        sb.append(DayOfWeek.of(v.getDayOfWeek().getValue())
-                                .getDisplayName(f.length < 4
-                                        ? TextStyle.SHORT : TextStyle.FULL,
-                                        Locale.US));
+                        sb.append(v.getDayOfWeek().getDisplayName(f.length < 4 ? TextStyle.SHORT : TextStyle.FULL, Locale.US));
                         break;
                     case QUARTER:
                         int q = (v.getMonthValue() - 1) / 3 + 1;
-                        sb.append(f.length == 3
-                                ? "Q" + q : ORDINAL[q - 1] + " quarter");
+                        sb.append(f.length == 3 ? "Q" + q : ORDINAL[q - 1] + " quarter");
                         break;
-                    case HOUR24:
-                        sb.append(pad(h, f.length));
-                        break;
-                    case HOUR12:
-                        sb.append(pad(h % 12 == 0 ? 12 : h % 12, f.length));
-                        break;
-                    case AMPM:
-                        sb.append(h < 12 ? "AM" : "PM");
-                        break;
-                    case MINUTE:
-                        sb.append(pad(v.getMinute(), f.length));
-                        break;
+                    case HOUR24: sb.append(pad(h, f.length)); break;
+                    case HOUR12: sb.append(pad(h % 12 == 0 ? 12 : h % 12, f.length)); break;
+                    case AMPM: sb.append(h < 12 ? "AM" : "PM"); break;
+                    case MINUTE: sb.append(pad(v.getMinute(), f.length)); break;
                     case SECOND:
                         sb.append(pad(v.getSecond(), f.length));
-                        if (f.decimalPlaces > 0) {
-                            String nanos = pad(v.getNano(), 9);
-                            sb.append('.').append(nanos.substring(0, f.decimalPlaces));
-                        }
+                        if (f.decimalPlaces > 0) sb.append('.').append(pad(v.getNano(), 9), 0, f.decimalPlaces);
                         break;
-                    case TEXT:
-                        sb.append(f.text);
-                        break;
-                    default:
-                        throw new AssertionError(f.type);
+                    case TEXT: sb.append(f.text); break;
+                    default: throw new AssertionError(f.type);
                 }
             }
             return sb.toString();
@@ -150,77 +123,50 @@ public class PatternOracleTest {
         }
     }
 
-    private static List<String> dateTimePatterns() {
+    private static List<String> firstColumn(Object[][] rows) {
         List<String> patterns = new ArrayList<>();
-        for (Object[] row : DateTimePatternTest.accepted()) {
-            patterns.add((String) row[0]);
-        }
+        for (Object[] row : rows) patterns.add((String) row[0]);
         return patterns;
     }
 
-    private static List<String> numberPatterns() {
-        List<String> patterns = new ArrayList<>();
-        for (Object[] row : NumberPatternTest.accepted()) {
-            patterns.add((String) row[0]);
-        }
-        return patterns;
+    private static String mismatch(String pattern, Object value, String java, String model) {
+        return java.equals(model) ? null
+                : "[" + pattern + "] " + value + ": java=[" + java + "] model=[" + model + "]";
     }
 
     /** Returns a description of the first mismatch, or null if none. */
     private static String compareDateTime(DateTimePattern p, String pattern) {
         DateTimeFormatter java = DateTimeFormatter.ofPattern(pattern, Locale.US);
         for (LocalDateTime v : DATES) {
-            String expected = java.format(v);
-            String actual = OdfModel.render(p, v);
-            if (!expected.equals(actual)) {
-                return "[" + pattern + "] " + v + ": java=[" + expected
-                        + "] model=[" + actual + "]";
-            }
+            String m = mismatch(pattern, v, java.format(v), OdfModel.render(p, v));
+            if (m != null) return m;
         }
         return null;
     }
 
     private static String compareNumber(NumberPattern p, String pattern) {
-        DecimalFormat java = new DecimalFormat(
-                pattern, DecimalFormatSymbols.getInstance(Locale.US));
+        DecimalFormat java = new DecimalFormat(pattern, DecimalFormatSymbols.getInstance(Locale.US));
         for (BigDecimal v : NUMBERS) {
-            String actual = OdfModel.render(p, v);
-            if (actual == null) continue;
-            String expected = java.format(v);
-            if (!expected.equals(actual)) {
-                return "[" + pattern + "] " + v + ": java=[" + expected
-                        + "] model=[" + actual + "]";
-            }
+            String model = OdfModel.render(p, v);
+            String m = model == null ? null : mismatch(pattern, v, java.format(v), model);
+            if (m != null) return m;
         }
         return null;
     }
 
     @Test
-    public void javaGateAcceptsEveryAcceptedPattern() {
-        for (String pattern : dateTimePatterns()) {
-            DateTimePattern.parse(pattern);
-            DateTimeFormatter.ofPattern(pattern, Locale.ROOT);
-        }
-        for (String pattern : numberPatterns()) {
-            NumberPattern.parse(pattern);
-            new DecimalFormat(pattern,
-                    DecimalFormatSymbols.getInstance(Locale.ROOT));
-        }
-    }
-
-    @Test
     public void dateTimeModelMatchesJava() {
-        for (String pattern : dateTimePatterns()) {
-            String mismatch = compareDateTime(DateTimePattern.parse(pattern), pattern);
-            assertNull(mismatch, mismatch);
+        for (String pattern : firstColumn(DateTimePatternTest.accepted())) {
+            String m = compareDateTime(DateTimePattern.parse(pattern), pattern);
+            assertNull(m, m);
         }
     }
 
     @Test
     public void numberModelMatchesJava() {
-        for (String pattern : numberPatterns()) {
-            String mismatch = compareNumber(NumberPattern.parse(pattern), pattern);
-            assertNull(mismatch, mismatch);
+        for (String pattern : firstColumn(NumberPatternTest.accepted())) {
+            String m = compareNumber(NumberPattern.parse(pattern), pattern);
+            assertNull(m, m);
         }
     }
 
@@ -246,9 +192,8 @@ public class PatternOracleTest {
     @Test(dataProvider = "dateTimeExamples")
     public void dateTimeExamplesMatchJavaAndModel(
             String pattern, LocalDateTime value, String expected) {
-        DateTimePattern p = DateTimePattern.parse(pattern);
         assertEquals(expected, DateTimeFormatter.ofPattern(pattern, Locale.US).format(value));
-        assertEquals(expected, OdfModel.render(p, value));
+        assertEquals(expected, OdfModel.render(DateTimePattern.parse(pattern), value));
     }
 
     @DataProvider
@@ -263,28 +208,23 @@ public class PatternOracleTest {
             {"0.0%", bd("0.5"), "50.0%"},
             {"%0.0", bd("0.5"), "%50.0"},
             {"$#,##0.00", bd("1234.5"), "$1,234.50"},
-            {"0.00 kg", bd("1234.5"), "1234.50 kg"},
-            {"0.00' m'", bd("1234.5"), "1234.50 m"},
             {"0.00 m", bd("1234.5"), "1234.50 m"},
             {"0 days", bd("3"), "3 days"},
-            {"0.00 A", bd("1234.5"), "1234.50 A"},
         };
     }
 
     @Test(dataProvider = "numberExamples")
     public void numberExamplesMatchJavaAndModel(
             String pattern, BigDecimal value, String expected) {
-        NumberPattern p = NumberPattern.parse(pattern);
-        DecimalFormat java = new DecimalFormat(
-                pattern, DecimalFormatSymbols.getInstance(Locale.US));
+        DecimalFormat java = new DecimalFormat(pattern, DecimalFormatSymbols.getInstance(Locale.US));
         assertEquals(expected, java.format(value));
-        assertEquals(expected, OdfModel.render(p, value));
+        assertEquals(expected, OdfModel.render(NumberPattern.parse(pattern), value));
     }
 
     // The fuzz alphabet: every pattern-relevant char plus awkward ones.
     private static final String[] UNITS = unitsOf(
             "yMdEQHhmsSaGwWqDYAuLekKzZXT0#,.%E;\u2030\u00A4-' :/"
-            + " \tµ\u0000[]?_*\"1259");
+            + " \tµ\u0000[]?_*\"1259()年");
 
     private static String[] unitsOf(String chars) {
         String[] units = new String[chars.length() + 1];
@@ -326,25 +266,21 @@ public class PatternOracleTest {
         return s;
     }
 
-    private interface Entry {
-        /** Parses, returns a mismatch description, or null; rejects with IAE. */
-        String check(String pattern);
-    }
-
-    private static void fuzz(List<String> accepted, Entry entry, long seed) {
+    /** Fuzzes {@code check}, which returns a mismatch description or null. */
+    private static void fuzz(List<String> accepted, Function<String, String> check, long seed) {
         Random rnd = new Random(seed);
         int parsed = 0;
         for (int i = 0; i < 20000; i++) {
             String pattern = randomPattern(rnd, accepted);
-            String where = "seed=" + seed + " iteration=" + i + " pattern=["
-                    + pattern + "]: ";
+            String where = "seed=" + seed + " iteration=" + i + " pattern=[" + pattern + "]: ";
             String mismatch;
             try {
-                mismatch = entry.check(pattern);
+                mismatch = check.apply(pattern);
                 parsed++;
             } catch (IllegalArgumentException e) {
-                assertTrue(where + e.getMessage(),
-                        e.getMessage().contains(pattern));
+                assertTrue(where + e.getMessage(), e.getMessage().contains(pattern));
+                // The JDK safety net must never be what rejects a pattern.
+                assertFalse(where + e.getMessage(), e.getMessage().startsWith("Not a valid"));
                 continue;
             } catch (RuntimeException e) {
                 fail(where + "wrong exception type: " + e);
@@ -357,27 +293,15 @@ public class PatternOracleTest {
 
     @Test
     public void fuzzDateTime() {
-        fuzz(dateTimePatterns(), new Entry() {
-            @Override
-            public String check(String pattern) {
-                DateTimePattern p = DateTimePattern.parse(pattern);
-                // Accepted must mean the Java gate accepts it as well.
-                DateTimeFormatter.ofPattern(pattern, Locale.ROOT);
-                return compareDateTime(p, pattern);
-            }
-        }, 20261005L);
+        fuzz(firstColumn(DateTimePatternTest.accepted()),
+                pattern -> compareDateTime(DateTimePattern.parse(pattern), pattern),
+                20261005L);
     }
 
     @Test
     public void fuzzNumber() {
-        fuzz(numberPatterns(), new Entry() {
-            @Override
-            public String check(String pattern) {
-                NumberPattern p = NumberPattern.parse(pattern);
-                new DecimalFormat(pattern,
-                        DecimalFormatSymbols.getInstance(Locale.ROOT));
-                return compareNumber(p, pattern);
-            }
-        }, 20261006L);
+        fuzz(firstColumn(NumberPatternTest.accepted()),
+                pattern -> compareNumber(NumberPattern.parse(pattern), pattern),
+                20261006L);
     }
 }

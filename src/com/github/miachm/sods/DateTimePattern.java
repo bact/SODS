@@ -16,38 +16,13 @@ import static com.github.miachm.sods.PatternText.reject;
 
 /**
  * A date/time pattern in {@code java.time.format.DateTimeFormatter} syntax,
- * restricted to a strict subset: every accepted pattern is a valid Java
- * pattern, renders the same text as Java (with {@code Locale.US}), and can
- * be stored exactly as an ODF 1.2 {@code number:date-style} or
- * {@code number:time-style}. Anything else throws
- * {@link IllegalArgumentException} naming the offending character, its index
- * and a fix. The caller chooses the kind (date/time or number), so the string
- * is never guessed.
+ * restricted to a strict subset: every accepted pattern is valid Java, renders
+ * the same text as Java (with {@code Locale.US}), and can be stored exactly as
+ * an ODF 1.2 {@code number:date-style} or {@code number:time-style}. Anything
+ * else throws {@link IllegalArgumentException}.
  *
- * <p>Text in {@code '...'} is literal and {@code ''} is a literal single
- * quote ({@code "HH''mm"} &rarr; {@code 14'07}). Unquoted, only space,
- * {@code - : / . ,} and the digits {@code 0-9} are literal; any other text,
- * including {@code T}, must be quoted. Java prints unquoted digits as they
- * are ({@code "HH:mm:00"} &rarr; {@code 14:07:00}).
- *
- * <table border="1">
- * <caption>Examples for 2026-10-05 14:07:09.123</caption>
- * <tr><th>Pattern</th><th>Meaning</th><th>Example</th></tr>
- * <tr><td>{@code yy}, {@code yyyy}</td><td>year</td><td>{@code 26}, {@code 2026}</td></tr>
- * <tr><td>{@code M} to {@code MMMM}</td><td>month</td><td>{@code 10}, {@code Oct}, {@code October}</td></tr>
- * <tr><td>{@code d}, {@code dd}</td><td>day of month</td><td>{@code 5}, {@code 05}</td></tr>
- * <tr><td>{@code E} to {@code EEEE}</td><td>day of week</td><td>{@code Mon}, {@code Monday}</td></tr>
- * <tr><td>{@code QQQ}, {@code QQQQ}</td><td>quarter</td><td>{@code Q4}, {@code 4th quarter}</td></tr>
- * <tr><td>{@code H}, {@code HH}</td><td>hour 0-23</td><td>{@code 14}</td></tr>
- * <tr><td>{@code h a}, {@code hh a}</td><td>hour 1-12, requires {@code a}</td><td>{@code 2 PM}, {@code 02 PM}</td></tr>
- * <tr><td>{@code m}, {@code mm}</td><td>minute; must follow an hour or precede seconds</td><td>{@code 14:07}</td></tr>
- * <tr><td>{@code s}, {@code ss}</td><td>second</td><td>{@code 9}, {@code 09}</td></tr>
- * <tr><td>{@code ss.S} to {@code ss.SSSSSSSSS}</td><td>fraction of second, only after {@code s.}</td><td>{@code 09.1}, {@code 09.123}</td></tr>
- * </table>
- *
- * <p>Each field may appear once. Dates use the ISO calendar, as Java does
- * for a {@code LocalDateTime}. Unquoted number symbols ({@code #},
- * {@code %}) are rejected with a hint to use the number kind.
+ * <p>The rules and examples are in {@link DataFormat}; this class only
+ * tokenizes and validates.
  */
 final class DateTimePattern {
 
@@ -66,31 +41,34 @@ final class DateTimePattern {
         final int length;         // repeat count, e.g. "yyyy" -> 4
         final int decimalPlaces;  // SECOND only: "ss.SSS" -> 3
         final String text;        // TEXT only: the literal characters
+        final int at;             // index of the first character in the pattern
 
         private Field(FieldType type, int length, int decimalPlaces,
-                String text) {
+                String text, int at) {
             this.type = type;
             this.length = length;
             this.decimalPlaces = decimalPlaces;
             this.text = text;
+            this.at = at;
         }
 
-        static Field of(FieldType type, int length) {
-            return new Field(type, length, 0, null);
+        static Field of(FieldType type, int length, int at) {
+            return new Field(type, length, 0, null, at);
         }
 
-        static Field ofSecond(int length, int decimalPlaces) {
-            return new Field(FieldType.SECOND, length, decimalPlaces, null);
+        static Field ofSecond(int length, int decimalPlaces, int at) {
+            return new Field(FieldType.SECOND, length, decimalPlaces, null, at);
         }
 
-        static Field ofText(String text) {
-            return new Field(FieldType.TEXT, 0, 0, text);
+        static Field ofText(String text, int at) {
+            return new Field(FieldType.TEXT, 0, 0, text, at);
         }
     }
 
-    // T is not here: Java reserves letters, so users write 'T' (P1).
-    // Digits are literal to DateTimeFormatter too (see isBareLiteral).
-    static final String BARE_LITERALS = " -:/.,";
+    // T is not here: Java reserves letters, so users write 'T'.
+    // Digits and non-ASCII characters are literal to DateTimeFormatter too
+    // (see isBareLiteral); its pattern letters are ASCII only.
+    private static final String BARE_LITERALS = " -:/.,()";
 
     final List<Field> fields;
 
@@ -98,46 +76,21 @@ final class DateTimePattern {
         this.fields = fields;
     }
 
-    /** True if the pattern has a year, month, day, weekday or quarter. */
-    boolean hasDateFields() {
-        for (Field field : fields) {
-            switch (field.type) {
-                case YEAR: case MONTH: case DAY:
-                case DAY_OF_WEEK: case QUARTER:
-                    return true;
-                default:
-                    break;
-            }
-        }
-        return false;
-    }
-
     static DateTimePattern parse(String pattern) {
-        if (pattern == null) {
-            throw new IllegalArgumentException(
-                    "Date/time pattern cannot be null");
-        }
         PatternText.rejectSpreadsheetName(pattern);
         PatternText.Flat flat = PatternText.flatten(pattern);
         List<Field> fields = scan(flat, pattern);
         checkHasFields(fields, flat, pattern);
-        mergeAdjacentText(fields);
-        validateEachFieldOnce(fields, pattern);
         validateHourAmPmConsistency(fields, pattern);
         validateMinuteHasNeighbour(fields, pattern);
-        // Safety net (P1): whatever we accepted must be valid Java.
-        try {
-            DateTimeFormatter.ofPattern(pattern, Locale.ROOT);
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException(
-                    "Not a valid DateTimeFormatter pattern: " + e.getMessage()
-                    + ": " + pattern, e);
-        }
+        mergeAdjacentText(fields);
+        PatternText.requireJava("DateTimeFormatter", pattern,
+                () -> DateTimeFormatter.ofPattern(pattern, Locale.ROOT));
         return new DateTimePattern(fields);
     }
 
     private static boolean isBareLiteral(char c) {
-        return BARE_LITERALS.indexOf(c) >= 0 || isAsciiDigit(c);
+        return BARE_LITERALS.indexOf(c) >= 0 || isAsciiDigit(c) || c >= 0x80;
     }
 
     // A pattern with no letters is a number pattern or plain text.
@@ -148,93 +101,124 @@ final class DateTimePattern {
         }
         for (int i = 0; i < flat.text.length(); i++) {
             if (!flat.literal[i] && flat.text.charAt(i) == '0') {
-                throw reject("No date/time letters; a digit placeholder "
-                        + "means this looks like a number pattern, use "
-                        + "DataFormat.number", pattern);
+                throw reject("No date/time letters; a digit placeholder looks "
+                        + "like a number pattern, use DataFormat.number",
+                        pattern);
             }
         }
-        throw reject("No date/time letters (expected letters like "
-                + "y, M, d, H, h, m, s, S, a)", pattern);
+        throw reject((pattern.isEmpty() ? "Empty pattern" : "No date/time letters")
+                + "; use letters like y, M, d, H, h, m, s, S, a", pattern);
     }
 
     private static List<Field> scan(PatternText.Flat flat, String pattern) {
         List<Field> fields = new ArrayList<>();
+        Set<FieldType> seen = EnumSet.noneOf(FieldType.class);
         String text = flat.text;
         int n = text.length();
         int i = 0;
         while (i < n) {
             char c = text.charAt(i);
             if (flat.literal[i] || isBareLiteral(c)) {
-                fields.add(Field.ofText(String.valueOf(c)));
+                fields.add(Field.ofText(String.valueOf(c), flat.src[i]));
                 i++;
                 continue;
             }
             if (!isAsciiLetter(c)) {
-                if (c == '#' || c == '%') {
-                    throw reject("Unquoted '" + c + "' at index " + flat.src[i]
-                            + " is not allowed in a date/time pattern; this "
-                            + "looks like a number pattern, use "
-                            + "DataFormat.number (or quote it as '" + c
-                            + "')", pattern);
-                }
-                if (c == '[' || c == ']') {
-                    throw reject(PatternText.bracketProblem(
-                            c, flat.src[i], true), pattern);
-                }
-                throw reject("Unquoted '" + c + "' at index " + flat.src[i]
-                        + " is not allowed in a date/time pattern; quote it "
-                        + "as '" + c + "'", pattern);
+                throw PatternText.unquoted(flat.src[i], unquotedTail(c), pattern);
             }
             if (c == 'S') {
                 throw reject("Fraction letter 'S' at index " + flat.src[i]
-                        + " must directly follow a seconds run and '.', "
-                        + "e.g. ss.SSS", pattern);
+                        + " must directly follow a seconds run and '.'; "
+                        + "write e.g. ss.SSS", pattern);
             }
             FieldType type = letterFieldType(c);
             if (type == null) {
                 if (c == 'T') {
-                    throw reject("Unquoted 'T' at index " + flat.src[i]
-                            + "; quote it as 'T' to print it literally "
-                            + "(e.g. yyyy-MM-dd'T'HH:mm)", pattern);
+                    throw PatternText.unquoted(flat.src[i], "; quote it as "
+                            + "'T' to print it (e.g. yyyy-MM-dd'T'HH:mm)",
+                            pattern);
                 }
-                throw reject("Unsupported letter '" + c + "' at index "
-                        + flat.src[i] + " (" + letterHint(flat, i)
-                        + "); quote it as '" + c + "' to print it literally",
-                        pattern);
+                throw PatternText.rejectAt("Unsupported letter '" + c
+                        + "' at index " + flat.src[i] + letterTail(c),
+                        flat.src[i], pattern);
             }
             int j = flat.runEnd(i);
             checkCount(flat, i, j, pattern);
+            // ODF 1.2 16.27.10/16.27.18: one instance of each element.
+            if (!seen.add(type)) {
+                throw reject("Duplicate field '" + text.substring(i, j)
+                        + "' at index " + flat.src[i] + "; ODF allows each "
+                        + "field once" + duplicateTail(fields, type), pattern);
+            }
             if (type == FieldType.SECOND && j + 1 < n
                     && !flat.literal[j] && text.charAt(j) == '.'
                     && !flat.literal[j + 1] && text.charAt(j + 1) == 'S') {
-                // ODF 1.2: number:seconds carries decimal-places (P2).
+                // ODF 1.2: number:seconds carries decimal-places.
                 int end = flat.runEnd(j + 1);
                 checkCount(flat, j + 1, end, pattern);
-                fields.add(Field.ofSecond(j - i, end - j - 1));
+                fields.add(Field.ofSecond(j - i, end - j - 1, flat.src[i]));
                 i = end;
                 continue;
             }
-            fields.add(Field.of(type, j - i));
+            fields.add(Field.of(type, j - i, flat.src[i]));
             i = j;
         }
         return fields;
     }
 
+    // Why a repeated field is rejected: a lone mm next to a date is a month.
+    private static String duplicateTail(List<Field> fields, FieldType type) {
+        return type == FieldType.MINUTE
+                && !minuteHasNeighbour(fields, firstMinute(fields))
+                ? " (spreadsheet mm next to a date is a month: use MM)"
+                : ", remove one";
+    }
+
+    // Tail of the message for an unquoted non-letter, non-literal character.
+    private static String unquotedTail(char c) {
+        switch (c) {
+            case '#': case '%':
+                return "; this looks like a number pattern, use "
+                        + "DataFormat.number or quote it as '" + c + "'";
+            case '[': case ']':
+                return PatternText.spreadsheetTail("like [h] (elapsed time) or "
+                        + "[~buddhist]", c);
+            case '{': case '}':
+                return "; '{' and '}' are reserved, remove it (quote it as '"
+                        + c + "' only to print it)";
+            default:
+                return "; quote it as '" + c + "'";
+        }
+    }
+
     // Why a letter is rejected, with the Java (or spreadsheet) fix.
-    private static String letterHint(PatternText.Flat flat, int i) {
-        char c = flat.text.charAt(i);
+    private static String letterTail(char c) {
+        if ("zZXxOV".indexOf(c) >= 0) {
+            return " (time zones cannot be stored in ODF 1.2); remove it";
+        }
+        return " (" + letterHint(c) + "); quote it as '" + c
+                + "' to print it literally";
+    }
+
+    private static String letterHint(char c) {
         switch (c) {
             case 'Y': return "Java 'Y' is week-based year; for the calendar "
                     + "year use yyyy or yy";
             case 'D': return "Java 'D' is day of year; for day of month use "
                     + "d or dd";
             case 'A': return "Java 'A' is milli-of-day; for AM/PM use a";
-            case 'N': return "for a weekday name use EEE or EEEE";
-            case 'W': return flat.runEnd(i) - i == 2
-                    ? "week of year is not supported"
-                    : "Java 'W' is week of month, not supported";
+            case 'N': return "Java 'N' is nano-of-day; for a weekday name "
+                    + "use EEE or EEEE";
+            case 'W': return "Java 'W' is week of month; spreadsheet WW (week "
+                    + "of year) is not supported either";
             case 'w': return "week of year is not supported";
+            case 'k': case 'K': return "Java 'k' is hour 1-24 and 'K' hour "
+                    + "0-11; use H, or h with a";
             case 'G': return "era is not supported";
+            case 'u': return "Java 'u' is the proleptic year; for the "
+                    + "calendar year use yyyy or yy";
+            case 'L': return "Java 'L' is the standalone month; use M, MM, "
+                    + "MMM or MMMM";
             case 'q': return "use QQQ or QQQQ for the quarter";
             default: return "not representable in ODF 1.2";
         }
@@ -257,7 +241,7 @@ final class DateTimePattern {
         }
     }
 
-    // Allowed run lengths per letter; each maps to an ODF style (P2).
+    // Allowed run lengths per letter; each maps to an ODF style.
     private static boolean validCount(char c, int count) {
         switch (c) {
             case 'y': return count == 2 || count == 4;
@@ -286,7 +270,7 @@ final class DateTimePattern {
             case 'E': return "use E, EE, EEE or EEEE";
             case 'Q': return "use QQQ or QQQQ";
             case 'a': return "use a";
-            case 'S': return "use 1 to 9 S";
+            case 'S': return "use S to SSSSSSSSS";
             default: return "use " + c + " or " + c + c;
         }
     }
@@ -301,19 +285,6 @@ final class DateTimePattern {
         }
     }
 
-    private static void validateEachFieldOnce(
-            List<Field> fields, String pattern) {
-        // ODF 1.2 16.27.10/16.27.18: one instance of each element (P2).
-        Set<FieldType> seen = EnumSet.noneOf(FieldType.class);
-        for (Field field : fields) {
-            if (field.type != FieldType.TEXT && !seen.add(field.type)) {
-                throw reject("Date/time field " + field.type
-                        + " appears more than once; ODF allows each field "
-                        + "at most once", pattern);
-            }
-        }
-    }
-
     private static FieldType neighbour(List<Field> fields, int from, int step) {
         for (int k = from + step; k >= 0 && k < fields.size(); k += step) {
             if (fields.get(k).type != FieldType.TEXT) {
@@ -323,53 +294,60 @@ final class DateTimePattern {
         return null;
     }
 
+    private static int firstMinute(List<Field> fields) {
+        for (int i = 0; i < fields.size(); i++) {
+            if (fields.get(i).type == FieldType.MINUTE) return i;
+        }
+        return -1;
+    }
+
+    // LibreOffice re-reads a number:minutes without an hour before it or
+    // seconds after it as a month.
+    private static boolean minuteHasNeighbour(List<Field> fields, int i) {
+        FieldType before = neighbour(fields, i, -1);
+        return before == FieldType.HOUR24 || before == FieldType.HOUR12
+                || neighbour(fields, i, 1) == FieldType.SECOND;
+    }
+
     private static void validateMinuteHasNeighbour(
             List<Field> fields, String pattern) {
-        // LibreOffice re-reads a lone number:minutes as month (P2).
         for (int i = 0; i < fields.size(); i++) {
             if (fields.get(i).type != FieldType.MINUTE) continue;
-            FieldType before = neighbour(fields, i, -1);
-            FieldType after = neighbour(fields, i, 1);
-            boolean ok = before == FieldType.HOUR24
-                    || before == FieldType.HOUR12
-                    || after == FieldType.SECOND;
-            if (!ok) {
-                throw reject("Minutes 'm' must follow an hour field or "
-                        + "precede a seconds field, otherwise ODF readers "
-                        + "treat them as a month; for a month use M or MM",
+            if (!minuteHasNeighbour(fields, i)) {
+                throw reject("Minute 'm' at index " + fields.get(i).at + " is read "
+                        + "as a month by LibreOffice; put it after an hour or "
+                        + "before seconds, or use M or MM for a month",
                         pattern);
             }
         }
     }
 
+    // ODF 1.2 16.27.22: an am-pm element makes hours 1-12.
     private static void validateHourAmPmConsistency(
             List<Field> fields, String pattern) {
-        // ODF 1.2 16.27.22: an am-pm element makes hours 1-12 (P2).
-        boolean hasHour12 = false;
-        boolean hasHour24 = false;
-        boolean hasAmPm = false;
-        for (Field field : fields) {
-            if (field.type == FieldType.HOUR12) hasHour12 = true;
-            if (field.type == FieldType.HOUR24) hasHour24 = true;
-            if (field.type == FieldType.AMPM) hasAmPm = true;
+        int h12 = -1;
+        int h24 = -1;
+        int ampm = -1;
+        for (int i = 0; i < fields.size(); i++) {
+            switch (fields.get(i).type) {
+                case HOUR12: if (h12 < 0) h12 = fields.get(i).at; break;
+                case HOUR24: if (h24 < 0) h24 = fields.get(i).at; break;
+                case AMPM: ampm = fields.get(i).at; break;
+                default: break;
+            }
         }
-        if (hasHour12 && hasHour24) {
-            throw reject("Pattern mixes both 'H' (24-hour) and "
-                    + "'h' (12-hour) tokens", pattern);
+        if (h12 >= 0 && h24 >= 0) {
+            throw reject("Mixing 'H' and 'h' at index " + Math.max(h12, h24)
+                    + "; use one of them", pattern);
         }
-        if (hasHour12 && !hasAmPm) {
-            throw reject("Pattern uses 'h' (12-hour clock) "
-                    + "without a paired 'a' AM/PM marker; ODF cannot "
-                    + "distinguish that from a 24-hour clock. Add 'a', or "
-                    + "use 'H' for a 24-hour clock (spreadsheet hh is "
-                    + "24-hour; in Java that is HH)", pattern);
+        if (h12 >= 0 && ampm < 0) {
+            throw reject("'h' at index " + h12 + " is the 12-hour clock and "
+                    + "needs 'a' (hh:mm a); for a 24-hour clock use HH",
+                    pattern);
         }
-        if (hasHour24 && hasAmPm) {
-            throw reject("Pattern uses 'H' (24-hour clock) "
-                    + "together with an 'a' AM/PM marker; ODF always "
-                    + "renders a 12-hour clock whenever an AM/PM marker is "
-                    + "present, so this is contradictory. Use 'h' for a "
-                    + "12-hour clock instead", pattern);
+        if (h24 >= 0 && ampm >= 0) {
+            throw reject("'H' (24-hour) with 'a' at index " + ampm
+                    + "; use 'h' for a 12-hour clock", pattern);
         }
     }
 
@@ -378,7 +356,7 @@ final class DateTimePattern {
             Field current = fields.get(i);
             Field next = fields.get(i + 1);
             if (current.type == FieldType.TEXT && next.type == FieldType.TEXT) {
-                fields.set(i, Field.ofText(current.text + next.text));
+                fields.set(i, Field.ofText(current.text + next.text, current.at));
                 fields.remove(i + 1);
             } else {
                 i++;

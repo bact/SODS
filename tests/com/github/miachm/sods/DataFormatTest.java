@@ -14,11 +14,7 @@ import java.util.Scanner;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
-import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.assertNotEquals;
-import static org.testng.Assert.assertNull;
-import static org.testng.Assert.assertFalse;
-import static org.testng.Assert.fail;
+import static org.testng.Assert.*;
 
 public class DataFormatTest {
 
@@ -32,6 +28,9 @@ public class DataFormatTest {
             {DataFormat.ISO_DATE, DataFormat.Kind.DATE_TIME, "yyyy-MM-dd", "DataFormat.dateTime(\"yyyy-MM-dd\")"},
             {DMY, DataFormat.Kind.DATE_TIME, "dd/MM/yyyy", "DataFormat.dateTime(\"dd/MM/yyyy\")"},
             {MONEY, DataFormat.Kind.NUMBER, "#,##0.00", "DataFormat.number(\"#,##0.00\")"},
+            // toString is a valid Java literal: quote and backslash are escaped
+            {DataFormat.dateTime("yyyy'\"\\'"), DataFormat.Kind.DATE_TIME, "yyyy'\"\\'",
+                "DataFormat.dateTime(\"yyyy'\\\"\\\\'\")"},
         };
     }
 
@@ -46,8 +45,9 @@ public class DataFormatTest {
     public void invalidAndNullArguments() {
         thrown(IllegalArgumentException.class, () -> DataFormat.dateTime("YYYY"));
         thrown(IllegalArgumentException.class, () -> DataFormat.number("0.0#"));
-        thrown(NullPointerException.class, () -> DataFormat.dateTime(null));
-        thrown(NullPointerException.class, () -> DataFormat.number(null));
+        for (Runnable r : new Runnable[] {() -> DataFormat.dateTime(null), () -> DataFormat.number(null)}) {
+            assertEquals(thrown(NullPointerException.class, r).getMessage(), "pattern can not be null");
+        }
     }
 
     @Test
@@ -59,8 +59,10 @@ public class DataFormatTest {
         assertNotEquals(DMY, DataFormat.ISO_DATE);
         assertNotEquals(DataFormat.number("0.00"), DataFormat.number("0.000"));
         assertNotEquals(DataFormat.TEXT, DataFormat.ISO_DATE);
-        assertNotEquals(DataFormat.TEXT, null);
-        assertNotEquals(DataFormat.TEXT, "@");
+        assertFalse(DataFormat.TEXT.equals(null));
+        assertFalse(DataFormat.TEXT.equals("@"));
+        // "0 a" is valid in both kinds: only the kind tells them apart
+        assertNotEquals(DataFormat.number("0 a"), DataFormat.dateTime("0 a"));
     }
 
     @DataProvider(name = "legacy")
@@ -72,11 +74,8 @@ public class DataFormatTest {
 
     @Test(dataProvider = "legacy")
     public void legacyStringIsTheSameSlotAsTypedFormat(String legacy, DataFormat typed) {
-        Style viaString = new Style();
-        viaString.setDataStyle(legacy);
-        Style viaFormat = new Style();
-        viaFormat.setDataFormat(typed);
-
+        Style viaString = withLegacy(legacy);
+        Style viaFormat = withFormat(typed);
         assertEquals(viaString.getDataFormat(), typed);
         assertEquals(viaFormat.getDataStyle(), legacy);
         assertEquals(viaString, viaFormat);
@@ -85,36 +84,30 @@ public class DataFormatTest {
 
     @Test
     public void styleSlotReplacesAndOtherFormatsHaveNoLegacyString() {
-        Style style = new Style();
-        style.setDataFormat(DataFormat.TEXT);
+        Style style = withFormat(DataFormat.TEXT);
         style.setDataFormat(MONEY);
         assertEquals(style.getDataFormat(), MONEY);
         assertNull(style.getDataStyle());
-
-        style.setDataStyle("YYYY-MM-DD");
-        assertEquals(style.getDataFormat(), DataFormat.ISO_DATE);
+        style.setDataFormat(DataFormat.ISO_DATE);
         style.setDataFormat(DMY);
         assertNull(style.getDataStyle());
+    }
+
+    @Test
+    public void legacySetterRejectsOtherStringsAndNullClears() {
+        Style style = withFormat(MONEY);
+        IllegalArgumentException e = thrown(IllegalArgumentException.class, () -> style.setDataStyle("bad"));
+        assertEquals(e.getMessage(), "At the moment, the only supported date styles are null, '@', "
+                + "and 'YYYY-MM-DD', but not 'bad'");
+        assertEquals(style.getDataFormat(), MONEY);
         style.setDataStyle(null);
         assertNull(style.getDataFormat());
     }
 
     @Test
-    public void legacySetterStillRejectsOtherStrings() {
-        Style style = new Style();
-        style.setDataFormat(MONEY);
-        IllegalArgumentException e = thrown(IllegalArgumentException.class, () -> style.setDataStyle("bad"));
-        assertEquals(e.getMessage(), "At the moment, the only supported date styles are null, '@', "
-                + "and 'YYYY-MM-DD', but not 'bad'");
-        assertEquals(style.getDataFormat(), MONEY);
-    }
-
-    @Test
     public void styleEqualityAndCloneSeeTheFormat() throws CloneNotSupportedException {
-        Style a = new Style();
-        Style b = new Style();
-        a.setDataFormat(DMY);
-        b.setDataFormat(DataFormat.dateTime("MM/dd/yyyy"));
+        Style a = withFormat(DMY);
+        Style b = withFormat(DataFormat.dateTime("MM/dd/yyyy"));
         assertNotEquals(a, b);
         assertNotEquals(a, new Style());
         b.setDataFormat(DataFormat.dateTime("dd/MM/yyyy"));
@@ -126,15 +119,12 @@ public class DataFormatTest {
     @Test
     public void cellKeepsTypedFormatAroundSetValue() {
         Range cell = new Sheet("A", 1, 1).getRange(0, 0);
-        Style style = new Style();
-        style.setDataFormat(DMY);
-        cell.setStyle(style);
-
-        cell.setValue(LocalDate.of(2026, 10, 5));
-        assertEquals(cell.getStyle().getDataFormat(), DMY);
+        cell.setStyle(withFormat(DMY));
         cell.setValue("text");
         assertEquals(cell.getStyle().getDataFormat(), DMY);
-
+        // A LocalDate does not replace a typed format
+        cell.setValue(LocalDate.of(2026, 10, 5));
+        assertEquals(cell.getStyle().getDataFormat(), DMY);
         // Without a typed format, ISO_DATE is still auto-applied and auto-cleared
         Range plain = new Sheet("B", 1, 1).getRange(0, 0);
         plain.setValue(LocalDate.of(2026, 10, 5));
@@ -145,18 +135,44 @@ public class DataFormatTest {
 
     @DataProvider(name = "writerPairs")
     public static Object[][] writerPairs() {
-        return new Object[][] {{"YYYY-MM-DD", DataFormat.ISO_DATE}, {"@", DataFormat.TEXT}};
+        return new Object[][] {
+            {"YYYY-MM-DD", DataFormat.ISO_DATE, "datestyle"}, {"@", DataFormat.TEXT, "textstyle"},
+        };
     }
 
     @Test(dataProvider = "writerPairs")
-    public void typedFormatWritesSameContentAsLegacyString(String legacy, DataFormat typed) throws IOException {
-        assertEquals(contentXml(styleOnly(typed)), contentXml(styleOnly(legacy)));
+    public void typedFormatWritesSameContentAsLegacyString(String legacy, DataFormat typed, String styleName)
+            throws IOException {
+        String content = contentXml(withFormat(typed));
+        assertEquals(content, contentXml(withLegacy(legacy)));
+        assertTrue(content.contains("data-style-name=\"" + styleName + "\""), content);
+    }
+
+    // The JDK's StAX writer may print an empty element as <x/> or <x></x>.
+    private static String emptyElementsAsSelfClosed(String xml) {
+        return xml.replaceAll("(<number:[a-z-]+[^<>/]*)></number:[a-z-]+>", "$1/>");
+    }
+
+    @Test
+    public void predefinedDataStylesAreWrittenInFull() throws IOException {
+        String content = emptyElementsAsSelfClosed(contentXml(withFormat(DataFormat.ISO_DATE)));
+        assertTrue(content.contains("<number:text-style style:name=\"textstyle\">"
+                + "<number:text-content/></number:text-style>"), content);
+        assertTrue(content.contains("<number:date-style style:name=\"datestyle\">"
+                + "<number:year number:style=\"long\"/><number:text>-</number:text>"
+                + "<number:month number:style=\"long\"/><number:text>-</number:text>"
+                + "<number:day number:style=\"long\"/></number:date-style>"), content);
+    }
+
+    @Test
+    public void cssExposesTheLegacyString() {
+        assertEquals(withFormat(DataFormat.ISO_DATE).getCssStyles().get("data-style"), "YYYY-MM-DD");
+        assertNull(withFormat(MONEY).getCssStyles().get("data-style"));
     }
 
     @Test
     public void unwrittenFormatAddsNoDataStyleName() throws IOException {
-        String content = contentXml(styleOnly(MONEY));
-        assertFalse(content.contains("data-style-name"), content);
+        assertFalse(contentXml(withFormat(MONEY)).contains("data-style-name"));
     }
 
     private static <T extends Throwable> T thrown(Class<T> type, Runnable action) {
@@ -170,10 +186,15 @@ public class DataFormatTest {
         return null;
     }
 
-    private static Style styleOnly(Object format) {
+    private static Style withFormat(DataFormat format) {
         Style style = new Style();
-        if (format instanceof DataFormat) style.setDataFormat((DataFormat) format);
-        else style.setDataStyle((String) format);
+        style.setDataFormat(format);
+        return style;
+    }
+
+    private static Style withLegacy(String dataStyle) {
+        Style style = new Style();
+        style.setDataStyle(dataStyle);
         return style;
     }
 

@@ -31,7 +31,7 @@ public class DataFormats {
         System.out.println(DataFormat.dateTime("dd/MM/yyyy"));
         System.out.println(DataFormat.number("#,##0.00"));
         try {
-            DataFormat.dateTime("hh:mm"); // spreadsheet style, 24-hour
+            DataFormat.dateTime("hh:mm"); // 12-hour clock without 'a' is rejected
         } catch (IllegalArgumentException e) {
             System.out.println(e.getMessage());
         }
