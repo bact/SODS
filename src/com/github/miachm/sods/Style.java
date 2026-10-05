@@ -23,7 +23,7 @@ public final class Style implements Cloneable {
     private boolean wrap = false;
     private TEXT_ALIGMENT horizontal_alignment = null;
     private VERTICAL_TEXT_ALIGMENT vertical_alignment = null;
-    private String dataStyle;
+    private DataFormat dataFormat;
     private List<ConditionalFormat> conditionalFormats = new ArrayList<>();
 
     /** Defines the text position of a Cell
@@ -346,14 +346,22 @@ public final class Style implements Cloneable {
     public VERTICAL_TEXT_ALIGMENT getVerticalTextAligment() { return vertical_alignment;}
 
     /**
-     * Returns the data style.
+     * Returns the data style as a legacy string.
      * This property is not populated when reading a spreadsheet.
+     * Formats other than {@link DataFormat#TEXT} and {@link DataFormat#ISO_DATE}
+     * have no legacy string; use {@link #getDataFormat()} to read them.
      *
-     * @return {@code null}, {@code @}, or {@code YYYY-MM-DD}
+     * @return {@code @} for {@link DataFormat#TEXT}, {@code YYYY-MM-DD} for
+     *         {@link DataFormat#ISO_DATE}, otherwise {@code null}
      * @see #setDataStyle(String)
+     * @see #getDataFormat()
      */
     public String getDataStyle() {
-        return dataStyle;
+        if (DataFormat.TEXT.equals(dataFormat))
+            return PLAIN_DATA_STYLE;
+        if (DataFormat.ISO_DATE.equals(dataFormat))
+            return ISO_DATE_DATA_STYLE;
+        return null;
     }
 
     /**
@@ -366,13 +374,48 @@ public final class Style implements Cloneable {
      *     <li>{@code YYYY-MM-DD}, which formats dates in the ISO style.</li>
      * </ul>
      *
+     * <p>This is the same slot as {@link #setDataFormat(DataFormat)}: {@code @} is
+     * {@link DataFormat#TEXT} and {@code YYYY-MM-DD} is {@link DataFormat#ISO_DATE}.
+     *
      * @param dataStyle {@code null}, {@code @}, or {@code YYYY-MM-DD}
+     * @throws IllegalArgumentException for any other value
      */
     public void setDataStyle(String dataStyle) {
-        if (dataStyle != null && !PLAIN_DATA_STYLE.equals(dataStyle) && !ISO_DATE_DATA_STYLE.equals(dataStyle))
+        if (dataStyle == null)
+            this.dataFormat = null;
+        else if (PLAIN_DATA_STYLE.equals(dataStyle))
+            this.dataFormat = DataFormat.TEXT;
+        else if (ISO_DATE_DATA_STYLE.equals(dataStyle))
+            this.dataFormat = DataFormat.ISO_DATE;
+        else
             throw new IllegalArgumentException("At the moment, the only supported date styles are null, '" +
                     PLAIN_DATA_STYLE + "', and '" + ISO_DATE_DATA_STYLE + "', but not '" + dataStyle + "'");
-        this.dataStyle = dataStyle;
+    }
+
+    /**
+     * Returns the data format of the cell.
+     * This property is not populated when reading a spreadsheet.
+     *
+     * @return the format, or {@code null} for the default, which permits interpretation
+     * @see #setDataFormat(DataFormat)
+     */
+    public DataFormat getDataFormat() {
+        return dataFormat;
+    }
+
+    /**
+     * Sets the data format, which tells office software how to interpret and format
+     * content entered into a cell. It replaces any previous data format or data style.
+     *
+     * <p>At the moment, only {@link DataFormat#TEXT} and {@link DataFormat#ISO_DATE}
+     * are written to the ODS file. Any other format is validated and kept by this
+     * object, but nothing is written for it.
+     *
+     * @param dataFormat the format, or {@code null} for the default
+     * @see DataFormat
+     */
+    public void setDataFormat(DataFormat dataFormat) {
+        this.dataFormat = dataFormat;
     }
 
     public Object clone() throws CloneNotSupportedException {
@@ -415,7 +458,7 @@ public final class Style implements Cloneable {
         if (!Objects.equals(fontColor, style.fontColor)) return false;
         if (!Objects.equals(backgroundColor, style.backgroundColor))
             return false;
-        if (!Objects.equals(dataStyle, style.dataStyle)) return false;
+        if (!Objects.equals(dataFormat, style.dataFormat)) return false;
         if (!Objects.equals(fontFamily, style.fontFamily)) return false;
         if (horizontal_alignment != style.horizontal_alignment)
             return false;
@@ -436,7 +479,7 @@ public final class Style implements Cloneable {
         result = 31 * result + fontSize;
         result = 31 * result + (borders != null ? borders.hashCode() : 0);
         result = 31 * result + (wrap ? 1 : 0);
-        result = 31 * result + (dataStyle != null ? dataStyle.hashCode() : 0);
+        result = 31 * result + (dataFormat != null ? dataFormat.hashCode() : 0);
         result = 31 * result + (fontFamily != null ? fontFamily.hashCode() : 0);
         result = 31 * result + conditionalFormats.hashCode();
         result = 31 * result + (horizontal_alignment != null ? horizontal_alignment.hashCode() : 0);
@@ -501,8 +544,8 @@ public final class Style implements Cloneable {
         if(vertical_alignment != null)
             result.put("vertical-align", getVerticalTextAligment().toString().toLowerCase());
 
-        if (dataStyle != null) {
-            result.put("data-style", dataStyle);
+        if (getDataStyle() != null) {
+            result.put("data-style", getDataStyle());
         }
 
         if (fontFamily != null) {

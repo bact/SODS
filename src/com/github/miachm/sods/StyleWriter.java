@@ -189,10 +189,10 @@ class StyleWriter {
         out.writeAttribute(STYLE, "family", "table-cell");
         out.writeAttribute(STYLE, "name", key);
 
-        String dataStyle = style.getDataStyle();
-        if (Style.PLAIN_DATA_STYLE.equals(dataStyle))
+        DataFormat dataFormat = style.getDataFormat();
+        if (DataFormat.TEXT.equals(dataFormat))
             out.writeAttribute(STYLE, "data-style-name", "textstyle");
-        else if (Style.ISO_DATE_DATA_STYLE.equals(dataStyle))
+        else if (DataFormat.ISO_DATE.equals(dataFormat))
             out.writeAttribute(STYLE, "data-style-name", "datestyle");
 
         if (style.hasTableCellProperties()) {
