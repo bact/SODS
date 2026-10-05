@@ -2,6 +2,7 @@ package steps;
 
 import com.github.miachm.sods.Color;
 import com.github.miachm.sods.ConditionalFormat;
+import com.github.miachm.sods.DataFormat;
 import com.github.miachm.sods.Style;
 import cucumber.api.java.en.Then;
 import cucumber.api.java.en.When;
@@ -123,5 +124,42 @@ public class StyleCucumber {
     @Then("^the World\\.conditionalFormat is equal to World\\.otherConditionalFormat$")
     public void the_World_conditionalFormat_is_equal_to_World_otherConditionalFormat() throws Throwable {
         assertTrue("Conditional formats should be equal in content", World.conditionalFormat.equals(World.otherConditionalFormat));
+    }
+
+    @When("^set a DataFormat\\.dateTime with pattern \"([^\"]*)\" to cell (\\d+),(\\d+)$")
+    public void set_a_DataFormat_dateTime_with_pattern_to_cell(String pattern, int row, int column) throws Throwable {
+        Style style = World.sheet.getRange(row, column).getStyle();
+        style.setDataFormat(DataFormat.dateTime(pattern));
+        World.sheet.getRange(row, column).setStyle(style);
+    }
+
+    @Then("^the DataFormat of cell (\\d+),(\\d+) has pattern \"([^\"]*)\"$")
+    public void the_DataFormat_of_cell_has_pattern(int row, int column, String expectedPattern) throws Throwable {
+        DataFormat dataFormat = World.sheet.getRange(row, column).getStyle().getDataFormat();
+        assertEquals("DataFormat pattern mismatch", expectedPattern, dataFormat.getPattern());
+    }
+
+    @Then("^the data style of cell (\\d+),(\\d+) is \"([^\"]*)\"$")
+    public void the_data_style_of_cell_is(int row, int column, String expectedStyle) throws Throwable {
+        String dataStyle = World.sheet.getRange(row, column).getStyle().getDataStyle();
+        assertEquals("Data style mismatch", expectedStyle, dataStyle);
+    }
+
+    @When("^create a DataFormat with invalid \"([^\"]*)\" pattern \"([^\"]*)\" and catch the exception$")
+    public void create_a_DataFormat_with_invalid_pattern_and_catch_the_exception(String type, String pattern) throws Throwable {
+        try {
+            if ("dateTime".equals(type)) {
+                DataFormat.dateTime(pattern);
+            } else if ("number".equals(type)) {
+                DataFormat.number(pattern);
+            }
+        } catch (IllegalArgumentException e) {
+            ExceptionChecker.registerException(e);
+        }
+    }
+
+    @Then("^the last exception message contains \"([^\"]*)\"$")
+    public void the_last_exception_message_contains(String keyword) throws Throwable {
+        ExceptionChecker.checkExceptionMessageContains(keyword);
     }
 }

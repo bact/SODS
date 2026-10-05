@@ -29,6 +29,14 @@ public class ExceptionChecker {
                 lastException instanceof NullPointerException);
     }
 
+    public static void checkExceptionMessageContains(String keyword) {
+        assertNotNull("Expected an exception to be registered", lastException);
+        String message = lastException.getMessage();
+        assertNotNull("Exception message is null", message);
+        assertTrue("Expected message to contain '" + keyword + "' but got '" + message + "'",
+                message.contains(keyword));
+    }
+
     public static void reset() {
         lastException = null;
     }
