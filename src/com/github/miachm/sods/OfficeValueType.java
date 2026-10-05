@@ -2,6 +2,7 @@ package com.github.miachm.sods;
 
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamWriter;
+import java.math.BigDecimal;
 import java.text.NumberFormat;
 import java.text.ParseException;
 import java.time.Duration;
@@ -73,9 +74,7 @@ enum OfficeValueType {
                 OfficeCurrency currency = (OfficeCurrency) value;
 
                 if (currency.getValue() != null) {
-                    NumberFormat formatter = NumberFormat.getInstance(Locale.US);
-                    formatter.setGroupingUsed(false);
-                    writer.writeAttribute(OFFICE, "value", formatter.format(currency.getValue()));
+                    writer.writeAttribute(OFFICE, "value", toXsdDouble(currency.getValue()));
                 }
 
                 if (currency.getCurrency() != null)
@@ -160,8 +159,7 @@ enum OfficeValueType {
                 OfficePercentage percentage = (OfficePercentage) value;
 
                 if (percentage.getValue() != null) {
-                    NumberFormat formatter = NumberFormat.getInstance(Locale.US);
-                    writer.writeAttribute(OFFICE, "value", formatter.format(percentage.getValue()));
+                    writer.writeAttribute(OFFICE, "value", toXsdDouble(percentage.getValue()));
                 }
             }
         }
@@ -276,4 +274,15 @@ enum OfficeValueType {
     }
 
     private static final OfficeValueType DEFAULT_VALUE = OfficeValueType.STRING;
+
+    /**
+     * Formats a number as a locale-independent xsd:double for office:value:
+     * no grouping separators, '.' as decimal separator, no precision loss.
+     */
+    static String toXsdDouble(double value) {
+        if (Double.isNaN(value) || Double.isInfinite(value)) {
+            return Double.toString(value);
+        }
+        return BigDecimal.valueOf(value).stripTrailingZeros().toPlainString();
+    }
 }

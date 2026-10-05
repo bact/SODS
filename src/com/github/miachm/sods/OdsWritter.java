@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.UnsupportedEncodingException;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -111,7 +112,7 @@ class OdsWritter {
     }
 
     private void writeMymeType() throws IOException {
-        out.addEntry(MIMETYPE.getBytes(),"mimetype",true);
+        out.addEntry(MIMETYPE.getBytes(StandardCharsets.US_ASCII),"mimetype",true);
     }
 
     private void writeSpreadsheet() throws IOException, XMLStreamException {

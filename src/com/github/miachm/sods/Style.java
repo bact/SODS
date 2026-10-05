@@ -499,7 +499,7 @@ public final class Style implements Cloneable {
             result.put("text-align", getTextAligment().toString());
 
         if(vertical_alignment != null)
-            result.put("vertical-align", getVerticalTextAligment().toString().toLowerCase());
+            result.put("vertical-align", getVerticalTextAligment().toString().toLowerCase(Locale.ROOT));
 
         if (dataStyle != null) {
             result.put("data-style", dataStyle);

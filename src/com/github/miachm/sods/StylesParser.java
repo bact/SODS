@@ -2,6 +2,7 @@ package com.github.miachm.sods;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.List;
 import java.util.Map;
 import java.util.logging.Logger;
@@ -154,7 +155,7 @@ class StylesParser {
                     String verticalAlign = instance.getAttribValue("style:vertical-align");
                     if (verticalAlign != null) {
                         Style.VERTICAL_TEXT_ALIGMENT pos = null;
-                        switch (verticalAlign.toLowerCase()) {
+                        switch (verticalAlign.toLowerCase(Locale.ROOT)) {
                             case "middle": pos = Style.VERTICAL_TEXT_ALIGMENT.Middle; break;
                             case "top": pos = Style.VERTICAL_TEXT_ALIGMENT.Top; break;
                             case "bottom": pos = Style.VERTICAL_TEXT_ALIGMENT.Bottom; break;

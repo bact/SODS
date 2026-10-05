@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.io.UnsupportedEncodingException;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 
 import static com.github.miachm.sods.OpenDocumentNamespaces.*;
@@ -205,7 +206,7 @@ class StyleWriter {
             }
 
             if (style.getVerticalTextAligment() != null) {
-                out.writeAttribute(STYLE, "vertical-align", style.getVerticalTextAligment().toString().toLowerCase());
+                out.writeAttribute(STYLE, "vertical-align", style.getVerticalTextAligment().toString().toLowerCase(Locale.ROOT));
             }
 
             if(style.hasBorders()) {

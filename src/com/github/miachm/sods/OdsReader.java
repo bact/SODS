@@ -4,6 +4,7 @@ import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.Map;
 
@@ -149,10 +150,10 @@ class OdsReader {
     }
 
     private void checkMimeType(byte[] buff) throws IOException {
-        if (buff == null || buff.length < CORRECT_MIMETYPE.getBytes().length) {
+        if (buff == null || buff.length < CORRECT_MIMETYPE.getBytes(StandardCharsets.US_ASCII).length) {
             throw new NotAnOdsException("This file doesn't look like an ODS file");
         }
-        String mimetype = new String(buff, 0, CORRECT_MIMETYPE.length());
+        String mimetype = new String(buff, 0, CORRECT_MIMETYPE.length(), StandardCharsets.US_ASCII);
         options.getLogger().finer("Mimetype read: " + mimetype);
         if (!mimetype.equals(CORRECT_MIMETYPE)) {
             options.getLogger().severe("Invalid mimetype: " + mimetype);

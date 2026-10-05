@@ -1,5 +1,7 @@
 package com.github.miachm.sods;
 
+import java.util.Locale;
+
 /** Color is a inmutable class for represent colors.
  */
 
@@ -38,7 +40,7 @@ final public class Color implements Cloneable {
      */
     public Color(String hexform)
     {
-        hexform = hexform.toLowerCase();
+        hexform = hexform.toLowerCase(Locale.ROOT);
         if (hexform.equals("transparent"))
             throw new OperationNotSupportedException("Transparent color not supported, use a null color object instead");
 

@@ -1,5 +1,7 @@
 package com.github.miachm.sods;
 
+import java.util.Locale;
+
 /**
  * Encryption parameters for a single package file entry, as stored in {@code META-INF/manifest.xml}.
  */
@@ -38,29 +40,29 @@ class OdfEncryptionMetadata {
 
     boolean isAesCbc() {
         if (algorithmName == null) return false;
-        String lower = algorithmName.toLowerCase();
+        String lower = algorithmName.toLowerCase(Locale.ROOT);
         return lower.contains("aes256-cbc") || lower.contains("aes-256-cbc");
     }
 
     boolean isAesGcm() {
         if (algorithmName == null) return false;
-        String lower = algorithmName.toLowerCase();
+        String lower = algorithmName.toLowerCase(Locale.ROOT);
         return lower.contains("aes256-gcm") || lower.contains("aes-256-gcm");
     }
 
     boolean isBlowfishCfb() {
         if (algorithmName == null) return false;
-        String lower = algorithmName.toLowerCase();
+        String lower = algorithmName.toLowerCase(Locale.ROOT);
         return lower.contains("blowfish") && lower.contains("cfb");
     }
 
     boolean isArgon2id() {
-        return keyDerivationName != null && keyDerivationName.toLowerCase().contains("argon2id");
+        return keyDerivationName != null && keyDerivationName.toLowerCase(Locale.ROOT).contains("argon2id");
     }
 
     boolean isPbkdf2() {
         if (keyDerivationName == null) return false;
-        return "PBKDF2".equals(keyDerivationName)  || keyDerivationName.toLowerCase().contains("pbkdf2");
+        return "PBKDF2".equals(keyDerivationName)  || keyDerivationName.toLowerCase(Locale.ROOT).contains("pbkdf2");
     }
 
     static class Builder {

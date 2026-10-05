@@ -2,6 +2,7 @@ package com.github.miachm.sods;
 
 import java.text.NumberFormat;
 import java.util.Currency;
+import java.util.Locale;
 
 /**
  * This class represents a Currency in a Spreadsheet
@@ -19,11 +20,15 @@ public class OfficeCurrency {
      *
      * @param currency The currency instance class, it specify which currency is. It can be null
      * @param value The numeric value. It can be null.
+     *
+     * The string form uses a {@link Locale#ROOT} currency format, so it does not
+     * depend on the JVM default locale. Use
+     * {@link #OfficeCurrency(Currency, Double, NumberFormat)} for a localized format.
      */
 
     public OfficeCurrency(Currency currency, Double value)
     {
-        this(currency, value, NumberFormat.getCurrencyInstance());
+        this(currency, value, NumberFormat.getCurrencyInstance(Locale.ROOT));
     }
 
 
