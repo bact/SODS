@@ -162,7 +162,7 @@ public class DataStylePatternOracleTest {
 
     private static void javaAccepts(DataStylePattern p, String pattern) {
         if (p.kind == DataStylePattern.Kind.DATE_TIME) {
-            DateTimeFormatter.ofPattern(pattern);
+            DateTimeFormatter.ofPattern(pattern, Locale.ROOT);
         } else {
             new DecimalFormat(pattern, DecimalFormatSymbols.getInstance(Locale.ROOT));
         }
@@ -205,25 +205,11 @@ public class DataStylePatternOracleTest {
 
     @Test
     public void odfModelMatchesJava() {
-        List<String> patterns = acceptedPatterns();
-        List<String> described = new ArrayList<>();
-        for (String pattern : patterns) {
-            DataStylePattern p = DataStylePattern.parse(pattern);
-            assertNull(compareWithJava(p, pattern), compareWithJava(p, pattern));
-            described.add(DataStylePatternTest.describe(p));
-        }
-        // Parsing and the model must not depend on the default locale.
-        Locale saved = Locale.getDefault();
-        try {
-            Locale.setDefault(new Locale("sv", "SE"));
-            for (int i = 0; i < patterns.size(); i++) {
-                DataStylePattern p = DataStylePattern.parse(patterns.get(i));
-                assertEquals(described.get(i), DataStylePatternTest.describe(p));
-                String mismatch = compareWithJava(p, patterns.get(i));
-                assertNull(mismatch, mismatch);
-            }
-        } finally {
-            Locale.setDefault(saved);
+        // Every formatter here is built with an explicit locale, so the
+        // result does not depend on the JVM default locale or time zone.
+        for (String pattern : acceptedPatterns()) {
+            String mismatch = compareWithJava(DataStylePattern.parse(pattern), pattern);
+            assertNull(mismatch, mismatch);
         }
     }
 

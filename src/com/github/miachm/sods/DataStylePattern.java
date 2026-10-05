@@ -49,6 +49,13 @@ import java.util.Set;
  * {@code "yyyy-MM-dd'T'HH:mm:ss.SSS"} &rarr;
  * {@code 2026-10-05T14:07:09.123}.
  *
+ * <p>Dates use the ISO (proleptic Gregorian) calendar, as Java does when
+ * formatting a {@code LocalDate} or {@code LocalDateTime}; a calendar
+ * named in a locale (e.g. {@code th-TH-u-ca-buddhist}) does not change
+ * that. Other calendars are not supported: patterns have no calendar
+ * letter, and Java only switches calendar through
+ * {@code DateTimeFormatter.withChronology}.
+ *
  * <h2>Number symbols</h2>
  * <table border="1">
  * <caption>Examples for 1234.5 and 0.5</caption>
@@ -75,6 +82,7 @@ import java.util.Set;
  *     fixed number of decimal places).</li>
  *     <li>{@code E} (scientific notation); quote it in text, e.g.
  *     {@code "0.00 'EUR'"}.</li>
+ *     <li>Unquoted {@code ?} (spreadsheet fraction digit, e.g. {@code "# ?/?"}): fractions are not supported; quote it to print it.</li>
  *     <li>{@code ;} (negative subpattern), &permil;, &curren;,
  *     a grouping size other than 3, and bare {@code -} (use
  *     {@code '-'}).</li>
@@ -83,11 +91,23 @@ import java.util.Set;
  * </ul>
  *
  * <h2>Known rendering differences</h2>
- * <p>Spreadsheet applications round halves up where Java rounds half-even
- * ({@code 0} on 2.5: Java {@code 2}, LibreOffice {@code 3}), show
- * {@code 0.00} where Java shows {@code -0.00} for tiny negatives, and use
- * the Julian calendar before 1582-10-15. Month and day names follow the
- * document locale.
+ * <p>These come from the value or the reader, not from the pattern:
+ * <ul>
+ *     <li>Rounding: Java rounds the exact binary value half-even;
+ *     LibreOffice rounds a 15-digit decimal half-up ({@code 0.00} on 1.005:
+ *     Java {@code 1.00}, LibreOffice {@code 1.01}; {@code 0} on 2.5:
+ *     Java {@code 2}, LibreOffice {@code 3}).</li>
+ *     <li>LibreOffice shows at most 15 significant digits; Java shows the
+ *     full double ({@code 123456789012345680} vs
+ *     {@code 123456789012346000}). This is a reader limit: ODF puts no
+ *     maximum on decimal places, so neither does this class.</li>
+ *     <li>Java shows {@code -0.00} for negative zero; LibreOffice shows
+ *     {@code 0.00}.</li>
+ *     <li>LibreOffice uses the Julian calendar before 1582-10-15.</li>
+ *     <li>Names, AM/PM text, separators and digits come from locale data,
+ *     which differs between LibreOffice and each JDK for most locales; the
+ *     examples above hold for {@code Locale.US}.</li>
+ * </ul>
  *
  * <h2>Legacy patterns</h2>
  * <p>{@code @} (plain text) and {@code YYYY-MM-DD} (same as
@@ -260,7 +280,7 @@ final class DataStylePattern {
                 ? "DateTimeFormatter" : "DecimalFormat";
         try {
             if (kind == Kind.DATE_TIME) {
-                DateTimeFormatter.ofPattern(pattern);
+                DateTimeFormatter.ofPattern(pattern, Locale.ROOT);
             } else {
                 new DecimalFormat(pattern,
                         DecimalFormatSymbols.getInstance(Locale.ROOT));
@@ -619,6 +639,11 @@ final class DataStylePattern {
                     throw reject("Unquoted 'E' at index " + at
                             + " (scientific notation is not supported); "
                             + "quote it, e.g. '0.00 'EUR''", pattern);
+                } else if (c == '?') {
+                    // '?' is a fraction digit in spreadsheet formats; Java prints it literally (P4).
+                    throw reject("Unquoted '?' at index " + at
+                            + ": fraction formats are not supported; "
+                            + "quote it as '?' to print it", pattern);
                 } else if (c == '‰' || c == '¤') {
                     throw reject("Unquoted '" + c + "' at index " + at
                             + " is not supported; quote it as '" + c + "'",

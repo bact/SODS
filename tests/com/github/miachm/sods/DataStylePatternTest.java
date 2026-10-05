@@ -63,6 +63,8 @@ public class DataStylePatternTest {
             {"YYYY-MM-DD", "DATE_TIME", ISO},
             {"0", "NUMBER", NUM + "0 pre='' suf=''"},
             {"0.00", "NUMBER", NUM + "2 pre='' suf=''"},
+            // ODF 1.2 number:decimal-places has no maximum; 15 digits is a reader limit.
+            {"0.00000000000000000000", "NUMBER", NUM + "20 pre='' suf=''"},
             {"#,##0.00", "NUMBER", NUM + "2 grp pre='' suf=''"},
             {"#,###,##0", "NUMBER", NUM + "0 grp pre='' suf=''"},
             {"#.00", "NUMBER", "num int=0 dec=2 pre='' suf=''"},
@@ -79,6 +81,8 @@ public class DataStylePatternTest {
             {"0.00 'EUR'", "NUMBER", NUM + "2 pre='' suf=' EUR'"},
             {"'yyyy'0", "NUMBER", NUM + "0 pre='yyyy' suf=''"},
             {"yyyy 0", "NUMBER", NUM + "0 pre='yyyy ' suf=''"},
+            {"0 '?'", "NUMBER", NUM + "0 pre='' suf=' ?'"},
+            {"0.00 '?/4'", "NUMBER", NUM + "2 pre='' suf=' ?/4'"},
         };
     }
 
@@ -143,6 +147,10 @@ public class DataStylePatternTest {
             {"0.00 0", "Digit placeholder '0' at index 5"},
             {"0.00E00", "Unquoted 'E' at index 4"},
             {"0.00 Euro", "Unquoted 'E' at index 5"},
+            {"# ?/?", "Unquoted '?' at index 2"},
+            {"0 ?/4", "Unquoted '?' at index 2"},
+            {"0.00?", "'?'"},
+            {"yyyy?MM", "Unquoted '?' at index 4"},
             {"0.0‰", "Unquoted '‰' at index 3"},
             {"¤0.00", "Unquoted '¤' at index 0"},
             {"-0.00", "Unquoted '-' at index 0"},
