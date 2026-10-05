@@ -26,7 +26,10 @@ import java.util.Set;
  * <p>Any unquoted {@code 0} or {@code #} makes a number pattern; otherwise
  * unquoted date/time letters make a date/time pattern. Text in
  * {@code '...'} is literal, and {@code ''} is a literal single quote
- * ({@code "HH''mm"} &rarr; {@code 14'07}).
+ * ({@code "HH''mm"} &rarr; {@code 14'07}). Quoting literal text is always
+ * safe. Unquoted, only space and {@code - : / . ,} work in date/time
+ * patterns, and in number patterns only prefix or suffix text without
+ * date/time letters (such as {@code $} or {@code kg}).
  *
  * <p>Spreadsheet format codes are a different language: {@code "yyyy-mm-dd"}
  * means year-month-day in a spreadsheet but would be year-minute-day in
@@ -71,7 +74,7 @@ import java.util.Set;
  * <tr><td>{@code ,}</td><td>grouping; exactly 3 digits after the last comma</td><td>{@code #,##0.00} &rarr; {@code 1,234.50}</td></tr>
  * <tr><td>{@code .}</td><td>decimal point; only {@code 0} after it</td><td>{@code 0.00} &rarr; {@code 1234.50}</td></tr>
  * <tr><td>{@code %}</td><td>percentage (value &times; 100); once, in the prefix or suffix</td><td>{@code 0.0%} &rarr; {@code 50.0%}; {@code %0.0} &rarr; {@code %50.0}</td></tr>
- * <tr><td>other text</td><td>literal prefix or suffix</td><td>{@code $#,##0.00} &rarr; {@code $1,234.50}; {@code 0.00 kg} &rarr; {@code 1234.50 kg}</td></tr>
+ * <tr><td>other text</td><td>literal prefix or suffix; quote any text containing a date/time letter</td><td>{@code $#,##0.00} &rarr; {@code $1,234.50}; {@code 0.00 kg} &rarr; {@code 1234.50 kg}; {@code 0.00' m'} &rarr; {@code 1234.50 m}</td></tr>
  * </table>
  *
  * <h2>Rejected, and what to use instead</h2>
@@ -88,6 +91,7 @@ import java.util.Set;
  *     fixed number of decimal places).</li>
  *     <li>{@code E} (scientific notation); quote it in text, e.g.
  *     {@code "0.00 'EUR'"}.</li>
+ *     <li>A date/time letter in a number pattern ({@code "0.00 m"}, {@code "HH:mm:00"}): ambiguous between a date and a number. Quote the text ({@code "0.00' m'"}) or the digits ({@code "HH:mm:'00'"}).</li>
  *     <li>Unquoted {@code ?} (spreadsheet fraction digit, e.g. {@code "# ?/?"}): fractions are not supported; quote it to print it.</li>
  *     <li>Other spreadsheet format-code syntax: unquoted {@code [} {@code ]} (colours, conditions, elapsed time), {@code "} (use {@code '}), {@code \}, {@code _} and {@code *}; quote them to print them.</li>
  *     <li>{@code ;} (negative subpattern), &permil;, &curren;,
@@ -202,6 +206,8 @@ final class DataStylePattern {
     // Y/D/A have no valid meaning anywhere in this grammar, so they are
     // rejected even inside an otherwise-permissive NUMBER pattern.
     private static final String ALWAYS_INVALID_LETTERS = "YDA";
+    // Supported date/time letters (E is rejected earlier, for scientific notation).
+    private static final String AMBIGUOUS_NUMBER_LETTERS = "yMdQHhmsSa";
     private static final String LEGACY_ISO_DATE_LITERAL = "YYYY-MM-DD";
     private static final String CANONICAL_ISO_DATE = "yyyy-MM-dd";
     // T is not here: Java reserves letters, so users write 'T' (P1).
@@ -690,6 +696,14 @@ final class DataStylePattern {
                     throw reject("Unquoted 'E' at index " + at
                             + " (scientific notation is not supported); "
                             + "quote it, e.g. '0.00 'EUR''", pattern);
+                } else if (AMBIGUOUS_NUMBER_LETTERS.indexOf(c) >= 0) {
+                    // A date/time letter here would mean something else to DateTimeFormatter (P1, P4).
+                    throw reject("Unquoted '" + c + "' at index " + at
+                            + ": a date/time letter in a number pattern "
+                            + "makes it ambiguous (it reads differently as "
+                            + "a date and as a number); quote literal text, "
+                            + "e.g. 0.00' m', or quote the digits of a "
+                            + "date/time pattern, e.g. HH:mm:'00'", pattern);
                 } else if (c == '?') {
                     // '?' is a fraction digit in spreadsheet formats; Java prints it literally (P4).
                     throw reject("Unquoted '?' at index " + at
