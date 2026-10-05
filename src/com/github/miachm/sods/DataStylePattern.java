@@ -28,6 +28,12 @@ import java.util.Set;
  * {@code '...'} is literal, and {@code ''} is a literal single quote
  * ({@code "HH''mm"} &rarr; {@code 14'07}).
  *
+ * <p>Spreadsheet format codes are a different language: {@code "yyyy-mm-dd"}
+ * means year-month-day in a spreadsheet but would be year-minute-day in
+ * Java, so SODS rejects it and suggests {@code yyyy-MM-dd}. Patterns are
+ * never guessed from spreadsheet syntax; such codes are rejected with a hint
+ * to the Java spelling.
+ *
  * <h2>Date/time letters</h2>
  * <table border="1">
  * <caption>Examples for 2026-10-05 14:07:09.123</caption>
@@ -83,6 +89,7 @@ import java.util.Set;
  *     <li>{@code E} (scientific notation); quote it in text, e.g.
  *     {@code "0.00 'EUR'"}.</li>
  *     <li>Unquoted {@code ?} (spreadsheet fraction digit, e.g. {@code "# ?/?"}): fractions are not supported; quote it to print it.</li>
+ *     <li>Other spreadsheet format-code syntax: unquoted {@code [} {@code ]} (colours, conditions, elapsed time), {@code "} (use {@code '}), {@code \}, {@code _} and {@code *}; quote them to print them.</li>
  *     <li>{@code ;} (negative subpattern), &permil;, &curren;,
  *     a grouping size other than 3, and bare {@code -} (use
  *     {@code '-'}).</li>
@@ -239,6 +246,12 @@ final class DataStylePattern {
             return parse(CANONICAL_ISO_DATE);
         }
 
+        if ("General".equals(pattern) || "Standard".equals(pattern)) {
+            throw reject("'" + pattern + "' is a spreadsheet format name, "
+                    + "not a pattern; use null for the default format",
+                    pattern);
+        }
+
         Flat flat = flatten(pattern);
         boolean hasPlaceholder = false;
         boolean hasLetter = false;
@@ -249,9 +262,9 @@ final class DataStylePattern {
             // behind a digit placeholder.
             if (ALWAYS_INVALID_LETTERS.indexOf(c) >= 0) {
                 throw reject("Unsupported letter '" + c + "' at index "
-                        + flat.src[i] + " (uppercase Y/D/A have no valid "
-                        + "meaning here); quote it as '" + c
-                        + "' or remove it", pattern);
+                        + flat.src[i] + " (" + invalidLetterHint(c, pattern)
+                        + "); quote it as '" + c
+                        + "' to print it literally", pattern);
             }
             if (c == '0' || c == '#') hasPlaceholder = true;
             else if (isAsciiLetter(c)) hasLetter = true;
@@ -272,6 +285,28 @@ final class DataStylePattern {
         // Safety net (P1): whatever we accepted must be valid Java.
         javaGate(result.kind, pattern);
         return result;
+    }
+
+    // Why Y/D/A are rejected, e.g. 'Y' -> "Java 'Y' is week-based year; ...".
+    private static String invalidLetterHint(char c, String pattern) {
+        switch (c) {
+            case 'Y': return "Java 'Y' is week-based year; for the calendar "
+                    + "year use yyyy or yy";
+            case 'D': return "Java 'D' is day of year; for day of month use "
+                    + "d or dd";
+            default: return pattern.contains("AM/PM") || pattern.contains("A/P")
+                    ? "for AM/PM use a" : "Java 'A' is milli-of-day";
+        }
+    }
+
+    // Extra hint for spreadsheet letters, e.g. 'N' -> "; for a weekday name ...".
+    private static String unsupportedLetterHint(Flat flat, int i) {
+        char c = flat.text.charAt(i);
+        if (c == 'N') return "; for a weekday name use EEE or EEEE";
+        if (c == 'W' && runEnd(flat, i) - i == 2) {
+            return "; week of year is not supported";
+        }
+        return "";
     }
 
     // P1: an accepted pattern must also be a valid JDK pattern.
@@ -388,7 +423,17 @@ final class DataStylePattern {
         }
     }
 
-    private static String countHint(char c) {
+    private static String countHint(char c, int count) {
+        if (c == 'm' && count >= 3) {
+            return "minutes take m or mm; for a month name use MMM or MMMM";
+        }
+        if (c == 'd' && count >= 3) {
+            return "day of month takes d or dd; for a weekday name use EEE "
+                    + "or EEEE";
+        }
+        if (c == 'Q' && count <= 2) {
+            return "use QQQ (spreadsheet Q) or QQQQ (spreadsheet QQ)";
+        }
         switch (c) {
             case 'y': return "use yy or yyyy";
             case 'M': return "use M, MM, MMM or MMMM";
@@ -415,7 +460,7 @@ final class DataStylePattern {
         if (!validCount(c, end - start)) {
             throw reject("Letter run '" + flat.text.substring(start, end)
                     + "' at index " + flat.src[start] + " is not allowed; "
-                    + countHint(c), pattern);
+                    + countHint(c, end - start), pattern);
         }
     }
 
@@ -434,8 +479,11 @@ final class DataStylePattern {
             }
             if (!isAsciiLetter(c)) {
                 throw reject("Unquoted '" + c + "' at index " + flat.src[i]
-                        + " is not allowed in a date/time pattern; quote it "
-                        + "as '" + c + "'", pattern);
+                        + " is not allowed in a date/time pattern"
+                        + (c == '[' ? " (spreadsheet elapsed time like [h] "
+                        + "and calendar modifiers like [~buddhist] are not "
+                        + "supported)" : "")
+                        + "; quote it as '" + c + "'", pattern);
             }
             if (c == 'S') {
                 throw reject("Fraction letter 'S' at index " + flat.src[i]
@@ -445,8 +493,9 @@ final class DataStylePattern {
             DateTimeFieldType type = letterFieldType(c);
             if (type == null) {
                 throw reject("Unsupported letter '" + c + "' at index "
-                        + flat.src[i] + " (not representable in ODF 1.2); "
-                        + "quote it as '" + c + "' to print it literally",
+                        + flat.src[i] + " (not representable in ODF 1.2"
+                        + unsupportedLetterHint(flat, i)
+                        + "); quote it as '" + c + "' to print it literally",
                         pattern);
             }
             int j = runEnd(flat, i);
@@ -509,7 +558,8 @@ final class DataStylePattern {
             if (!ok) {
                 throw reject("Minutes 'm' must follow an hour field or "
                         + "precede a seconds field, otherwise ODF readers "
-                        + "treat them as a month", pattern);
+                        + "treat them as a month; for a month use M or MM",
+                        pattern);
             }
         }
     }
@@ -533,7 +583,8 @@ final class DataStylePattern {
             throw reject("Data style pattern uses 'h' (12-hour clock) "
                     + "without a paired 'a' AM/PM marker; ODF cannot "
                     + "distinguish that from a 24-hour clock. Add 'a', or "
-                    + "use 'H' for a 24-hour clock", originalPattern);
+                    + "use 'H' for a 24-hour clock (spreadsheet hh is "
+                    + "24-hour; in Java that is HH)", originalPattern);
         }
         if (hasHour24 && hasAmPm) {
             throw reject("Data style pattern uses 'H' (24-hour clock) "
@@ -644,6 +695,28 @@ final class DataStylePattern {
                     throw reject("Unquoted '?' at index " + at
                             + ": fraction formats are not supported; "
                             + "quote it as '?' to print it", pattern);
+                } else if (c == '[' || c == ']') {
+                    // Spreadsheet format-code syntax that Java would print literally (P4).
+                    throw reject("Unquoted '" + c + "' at index " + at
+                            + ": spreadsheet colours and conditions like "
+                            + "[Red] or [<100] are not supported; quote it "
+                            + "as '" + c + "'", pattern);
+                } else if (c == '"') {
+                    throw reject("Unquoted '\"' at index " + at
+                            + ": Java quotes literal text with ', not \"; "
+                            + "write e.g. 0.00' kg'", pattern);
+                } else if (c == '\\') {
+                    throw reject("Unquoted '\\' at index " + at
+                            + ": Java has no backslash escape; quote the "
+                            + "text instead, e.g. 0.00' kg'", pattern);
+                } else if (c == '_') {
+                    throw reject("Unquoted '_' at index " + at
+                            + ": spreadsheet spacing (_x) is not supported; "
+                            + "quote it as '_'", pattern);
+                } else if (c == '*') {
+                    throw reject("Unquoted '*' at index " + at
+                            + ": spreadsheet fill (*x) is not supported; "
+                            + "quote it as '*'", pattern);
                 } else if (c == '‰' || c == '¤') {
                     throw reject("Unquoted '" + c + "' at index " + at
                             + " is not supported; quote it as '" + c + "'",
