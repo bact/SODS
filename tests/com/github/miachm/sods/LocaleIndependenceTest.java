@@ -33,7 +33,9 @@ public class LocaleIndependenceTest {
             "application/vnd.oasis.opendocument.spreadsheet";
 
     @Test
-    public void verticalAlignIsWrittenAsLowercaseOdfToken() throws IOException {
+    public void verticalAlignIsWrittenInLowercase() throws IOException {
+        // Documents the expected token only: the enum names contain no
+        // uppercase I, so this passes with or without Locale.ROOT.
         byte[] ods = save(sheetWithVerticalAlign(Style.VERTICAL_TEXT_ALIGMENT.Middle));
         String xml = readEntry(ods, "content.xml") + readEntry(ods, "styles.xml");
 
@@ -103,6 +105,45 @@ public class LocaleIndependenceTest {
         assertEquals(OfficeValueType.toXsdDouble(-1234.5), "-1234.5");
         assertEquals(OfficeValueType.toXsdDouble(1e20), "100000000000000000000");
         assertEquals(OfficeValueType.toXsdDouble(0.0), "0");
+        assertEquals(OfficeValueType.toXsdDouble(-0.0), "-0");
+        assertEquals(OfficeValueType.toXsdDouble(Double.NaN), "NaN");
+        assertEquals(OfficeValueType.toXsdDouble(Double.POSITIVE_INFINITY), "INF");
+        assertEquals(OfficeValueType.toXsdDouble(Double.NEGATIVE_INFINITY), "-INF");
+    }
+
+    @Test
+    public void xsdDoubleParsing() {
+        assertEquals(OfficeValueType.parseXsdDouble("1234.5"), 1234.5);
+        assertEquals(OfficeValueType.parseXsdDouble("-0"), -0.0);
+        assertEquals(OfficeValueType.parseXsdDouble("NaN"), Double.NaN);
+        assertEquals(OfficeValueType.parseXsdDouble("INF"), Double.POSITIVE_INFINITY);
+        assertEquals(OfficeValueType.parseXsdDouble("+INF"), Double.POSITIVE_INFINITY);
+        assertEquals(OfficeValueType.parseXsdDouble("-INF"), Double.NEGATIVE_INFINITY);
+        assertEquals(OfficeValueType.parseXsdDouble("abc"), null);
+        assertEquals(OfficeValueType.parseXsdDouble(null), null);
+    }
+
+    @Test
+    public void specialCurrencyAndPercentageValuesRoundTrip() throws IOException {
+        double[] values = {
+                -0.0, Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY};
+        Sheet sheet = new Sheet("A", 2, values.length);
+        for (int i = 0; i < values.length; i++) {
+            sheet.getRange(0, i).setValue(
+                    new OfficeCurrency(Currency.getInstance("EUR"), values[i]));
+            sheet.getRange(1, i).setValue(new OfficePercentage(values[i]));
+        }
+        SpreadSheet spread = new SpreadSheet();
+        spread.appendSheet(sheet);
+
+        Sheet loaded = new SpreadSheet(new ByteArrayInputStream(save(spread))).getSheet(0);
+        for (int i = 0; i < values.length; i++) {
+            // Double.equals distinguishes -0.0 from 0.0 and treats NaN as equal to NaN.
+            assertEquals(((OfficeCurrency) loaded.getRange(0, i).getValue()).getValue(),
+                    Double.valueOf(values[i]));
+            assertEquals(((OfficePercentage) loaded.getRange(1, i).getValue()).getValue(),
+                    Double.valueOf(values[i]));
+        }
     }
 
     private static OdfEncryptionMetadata metadata(String algorithm, String kdf) {

@@ -55,14 +55,7 @@ enum OfficeValueType {
                 currency = Currency.getInstance(tag);
 			}
 
-            NumberFormat nf = NumberFormat.getInstance(Locale.US);
-            Double value = null;
-            try {
-                value = nf.parse(reader.getAttribValue("office:value")).doubleValue();
-            }
-            catch (ParseException e)
-            {}
-
+            Double value = parseXsdDouble(reader.getAttribValue("office:value"));
             return new OfficeCurrency(currency, value);
         }
 
@@ -140,14 +133,7 @@ enum OfficeValueType {
     PERCENTAGE("percentage", OfficePercentage.class) {
         @Override
         public Object read(XmlReaderInstance reader) {
-            String raw = reader.getAttribValue("office:value");
-            NumberFormat nf = NumberFormat.getInstance(Locale.US);
-            Double value = null;
-            try {
-                value = nf.parse(raw).doubleValue();
-            }
-            catch (ParseException e)
-            {}
+            Double value = parseXsdDouble(reader.getAttribValue("office:value"));
             return new OfficePercentage(value);
         }
 
@@ -278,11 +264,41 @@ enum OfficeValueType {
     /**
      * Formats a number as a locale-independent xsd:double for office:value:
      * no grouping separators, '.' as decimal separator, no precision loss.
+     * Non-finite values use the xsd:double literals INF, -INF and NaN.
      */
     static String toXsdDouble(double value) {
-        if (Double.isNaN(value) || Double.isInfinite(value)) {
-            return Double.toString(value);
+        if (Double.isNaN(value)) {
+            return "NaN";
+        }
+        if (Double.isInfinite(value)) {
+            return value > 0 ? "INF" : "-INF";
+        }
+        if (value == 0) {
+            return 1 / value < 0 ? "-0" : "0";
         }
         return BigDecimal.valueOf(value).stripTrailingZeros().toPlainString();
+    }
+
+    /**
+     * Parses an office:value written as xsd:double, including INF, -INF and NaN.
+     *
+     * @return the value, or null if raw is null or not a number
+     */
+    static Double parseXsdDouble(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        switch (raw) {
+            case "NaN": return Double.NaN;
+            case "INF":
+            case "+INF": return Double.POSITIVE_INFINITY;
+            case "-INF": return Double.NEGATIVE_INFINITY;
+        }
+        try {
+            return NumberFormat.getInstance(Locale.US).parse(raw).doubleValue();
+        }
+        catch (ParseException e) {
+            return null;
+        }
     }
 }
